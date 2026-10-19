@@ -1,0 +1,21 @@
+{
+  "source": "bold-italic-regression",
+  "blocks": [
+    {
+      "role": "body",
+      "text": "RM",
+      "runs": [
+        {
+          "start": 0,
+          "end": 2,
+          "italic": true,
+          "bold": true
+        }
+      ],
+      "seq": 1
+    }
+  ],
+  "summary": {
+    "body": 1
+  }
+}

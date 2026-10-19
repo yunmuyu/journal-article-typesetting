@@ -1,0 +1,62 @@
+# Generated conversion output
+*.json
+!样例/*.json
+!examples/**/*.json
+!tests/*.json
+
+# Word / Office temporary files
+~$*
+*.tmp
+*.bak
+*.log
+
+# Local input/output working files
+input/
+output/
+exports/
+generated/
+
+# Python cache / virtual env
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local editor / agent state
+.claude/
+.cursor/
+.vscode/
+.idea/
+
+# Secrets and local env
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+credentials.json
+secrets.json
+
+# OS files
+Thumbs.db
+Desktop.ini
+
+# Local article sources, production layouts and verification artifacts
+*.doc
+*.docx
+*.indd
+*.idml
+*.idlk
+*.pdf
+*.ai
+*.eps
+*.wmf
+*.emf
+*.jpg
+*.jpeg
+*.png
+*.mp4
+work/
+outputs/
+local-validation/
+.recovery/

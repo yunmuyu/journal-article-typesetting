@@ -1,0 +1,28 @@
+{
+  "source": "regression",
+  "blocks": [
+    {
+      "role": "references_title",
+      "text": "参考文献：",
+      "runs": [],
+      "seq": 1
+    },
+    {
+      "role": "reference_item",
+      "text": "[1] 参考内容。",
+      "runs": [],
+      "seq": 2
+    },
+    {
+      "role": "author_bio",
+      "text": "作者简介：测试内容。",
+      "runs": [],
+      "seq": 3
+    }
+  ],
+  "summary": {
+    "references_title": 1,
+    "reference_item": 1,
+    "author_bio": 1
+  }
+}

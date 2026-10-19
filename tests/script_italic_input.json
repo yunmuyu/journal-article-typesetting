@@ -1,0 +1,15 @@
+{
+  "blocks": [
+    {"role": "body", "text": "XCHWβZ2", "runs": [
+      {"start": 0, "end": 1, "italic": true},
+      {"start": 1, "end": 2, "italic": true, "position": "superscript"},
+      {"start": 2, "end": 3, "italic": true, "bold": true, "position": "superscript"},
+      {"start": 3, "end": 4, "italic": true, "position": "superscript"},
+      {"start": 4, "end": 5, "italic": true, "position": "subscript"},
+      {"start": 5, "end": 6, "italic": true, "bold": true, "position": "subscript"},
+      {"start": 6, "end": 7, "position": "subscript"}
+    ]},
+    {"role": "table_gap", "text": "   ", "runs": []},
+    {"role": "body", "text": "after", "runs": [{"start": 0, "end": 5, "italic": true}]}
+  ]
+}

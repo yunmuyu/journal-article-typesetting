@@ -1,0 +1,56 @@
+{
+  "source": "synthetic-example.docx",
+  "blocks": [
+    {
+      "role": "heading1",
+      "text": "0  引  言",
+      "runs": []
+    },
+    {
+      "role": "body",
+      "text": "这是合成的排版演示段落，用于验证正文和上标引用[1]。",
+      "runs": [
+        {
+          "position": "superscript",
+          "end": 26,
+          "start": 23
+        }
+      ]
+    },
+    {
+      "role": "figure_caption",
+      "text": "图1  合成示意图",
+      "runs": []
+    },
+    {
+      "role": "blank",
+      "text": "",
+      "runs": []
+    },
+    {
+      "role": "table_caption",
+      "text": "表1  合成示例表",
+      "runs": []
+    },
+    {
+      "role": "table_gap",
+      "text": "   ",
+      "runs": []
+    },
+    {
+      "role": "references_title",
+      "text": "参考文献：",
+      "runs": []
+    },
+    {
+      "role": "reference_item",
+      "text": "[1] 示例作者.合成文献标题[J].示例期刊,2026,1(1):1-2.",
+      "runs": []
+    },
+    {
+      "role": "author_bio",
+      "text": "作者简介：测试作者，研究方向：排版自动化。",
+      "runs": []
+    }
+  ]
+}

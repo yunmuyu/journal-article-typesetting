@@ -1,0 +1,18 @@
+{
+  "source": "superscript-leading-regression",
+  "blocks": [
+    {
+      "role": "body",
+      "text": "H×W×3",
+      "runs": [
+        { "start": 0, "end": 1, "position": "superscript", "italic": true },
+        { "start": 1, "end": 2, "position": "superscript" },
+        { "start": 2, "end": 3, "position": "superscript", "italic": true },
+        { "start": 3, "end": 4, "position": "superscript" },
+        { "start": 4, "end": 5, "position": "superscript" }
+      ],
+      "seq": 1
+    }
+  ],
+  "summary": { "body": 1 }
+}

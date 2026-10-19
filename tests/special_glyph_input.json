@@ -1,0 +1,14 @@
+{
+  "source": "special-glyph-regression",
+  "blocks": [
+    {
+      "role": "body",
+      "text": "K｡ R² xⁿ⁺ y₁₋ₓ",
+      "runs": [
+        { "start": 3, "end": 4, "italic": true }
+      ],
+      "seq": 1
+    }
+  ],
+  "summary": { "body": 1 }
+}

@@ -1,0 +1,18 @@
+* text=auto
+
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.py text eol=lf
+*.jsx text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+
+*.doc binary
+*.docx binary
+*.indd binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+
+*.jsxinc text eol=lf

@@ -1,0 +1,24 @@
+{
+  "blocks": [
+    {
+      "role": "en_abstract",
+      "runs": [],
+      "text": "Absrtact: A synthetic layout test."
+    },
+    {
+      "role": "en_keywords",
+      "runs": [],
+      "text": "Keywords: layout; testing"
+    },
+    {
+      "role": "author_bio",
+      "runs": [],
+      "text": "作者简介：测试作者，研究方向：排版。"
+    },
+    {
+      "role": "body",
+      "runs": [],
+      "text": "正文测试内容，不应继承其他字体。"
+    }
+  ]
+}
