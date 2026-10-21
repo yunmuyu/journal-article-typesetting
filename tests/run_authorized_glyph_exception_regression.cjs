@@ -1,0 +1,20 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const context=vm.createContext({Position:{NORMAL:0,SUPERSCRIPT:1,SUBSCRIPT:2},FontStatus:{INSTALLED:1},app:{fonts:{itemByName:name=>({name,isValid:true,status:1}),everyItem:()=>({getElements:()=>[regular,italic]})}}});
+vm.runInContext(fs.readFileSync('2-导入_InDesign/journal_layout_rules.jsxinc','utf8'),context);
+const regular={name:'Times New Roman'+String.fromCharCode(9)+'Regular',fontFamily:'Times New Roman',postscriptName:'TimesNewRomanPSMT',status:1},italic={name:'Times New Roman'+String.fromCharCode(9)+'Italic',fontFamily:'Times New Roman',postscriptName:'TimesNewRomanPS-ItalicMT',status:1},math={name:'Cambria Math'+String.fromCharCode(9)+'Regular'};
+const chars=[{contents:'S',position:0,fontStyle:'Italic',appliedFont:italic},{contents:'=',position:0,fontStyle:'Regular',appliedFont:regular},{contents:'∅',position:0,fontStyle:'Regular',appliedFont:math}];
+const paragraph={contents:'S=∅',characters:chars,appliedParagraphStyle:{name:'正文_wrd_1'}};
+const doc={stories:[{paragraphs:[paragraph],extractLabel:()=> 'body'}]};
+const block={role:'body',text:'S=∅',runs:[{start:0,end:1,italic:true},{start:2,end:3,italic:true}]};
+const config={sourceTextFormatting:[block],sourceFormatExceptions:[{role:'body',paragraphText:'S=∅',start:2,end:3,text:'∅',italic:false,fontFamily:'Cambria Math',userApproved:true,reason:'explicit user authorization'}]};
+assert.equal(context.JournalLayout.sourceTextFormatting(doc,config,false).length,0);
+assert.equal(chars[0].fontStyle,'Italic');
+config.sourceFormatExceptions[0].userApproved=false;
+assert.ok(context.JournalLayout.sourceTextFormatting(doc,config,false).some(x=>x.includes('ITALIC')));
+config.sourceFormatExceptions[0].userApproved=true;chars[2].appliedFont=regular;
+assert.ok(context.JournalLayout.sourceTextFormatting(doc,config,false).some(x=>x.includes('EXCEPTION_FONT')));
+console.log('PASS authorized exact-glyph override preserves neighboring source italics and checks the replacement font');
+
+assert.equal(context.JournalLayout.sourceTextFormatting(doc,config,true).length,0);
+assert.equal(chars[2].appliedFont.name,'Cambria Math	Regular');
+assert.equal(chars[0].fontStyle,'Italic');

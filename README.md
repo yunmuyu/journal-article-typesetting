@@ -1,10 +1,14 @@
 # 期刊文章自动排版与检查系统
 
-这是从人工排版示范学习、经赵志威和张芳芳两篇验证的独立项目。第一版为 **v1.0.0**。
+这是从人工排版示范学习、经赵志威和张芳芳两篇验证的独立项目。第一版基线为 **v1.0.0**；当前工作分支包含后续工具修订。
 
 私有仓库：https://github.com/yunmuyu/journal-article-typesetting
 
 本项目负责文章排版规范化、版面和内容检查、恢复副本及回归验证。原有[word-to-indesign-toolkit](https://github.com/yunmuyu/word-to-indesign-toolkit)是独立的Word提取/导入工具，本项目复用其提取组件，不属于旧工具项目的后续版本。
+
+## 当前工具修订
+
+最新说明见 [2026-10-21工具更新](docs/releases/2026-10-21-tools-update.md)。`run_journal_article.py` 仍是未完成原型，正式流程使用下面的分阶段组件。表内公式及原位装配等限制以更新说明为准。
 
 ## 运行流程
 

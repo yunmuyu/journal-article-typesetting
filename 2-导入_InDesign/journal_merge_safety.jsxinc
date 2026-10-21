@@ -1,0 +1,147 @@
+/* Export copies only: preserve style names and values while isolating their group paths. */
+var JournalMergeSafety = (function () {
+    function prepare(document, token) {
+        if (!/(QA|copy|副本)/i.test(document.name)) throw Error('MERGE_QA_REQUIRED');
+        if (!/^[A-Za-z0-9_-]+$/.test(token)) throw Error('MERGE_STYLE_TOKEN');
+        var label = 'journal-merge-style-namespace', name = '期刊排版_' + token;
+        var previous = document.extractLabel(label);
+        if (previous) {
+            if (previous !== name) throw Error('MERGE_NAMESPACE_CHANGED');
+            return {namespace:name, reused:true};
+        }
+        var types = [
+            ['paragraphStyleGroups','paragraphStyles'],
+            ['objectStyleGroups','objectStyles'], ['tableStyleGroups','tableStyles'], ['cellStyleGroups','cellStyles']
+        ], moved = 0;
+        for (var ti = 0; ti < types.length; ti++) {
+            var groups = document[types[ti][0]], styles = document[types[ti][1]];
+            var roots = groups.everyItem().getElements(), rootStyles = styles.everyItem().getElements();
+            if (!roots.length && rootStyles.length <= 1) continue;
+            var destination = groups.itemByName(name);
+            if (!destination.isValid) destination = groups.add({name:name});
+            for (var gi = 0; gi < roots.length; gi++) {
+                if (String(roots[gi].name) === name) continue;
+                roots[gi].move(LocationOptions.AT_END, destination);
+                moved++;
+            }
+            for (var si = 0; si < rootStyles.length; si++) {
+                if (/^\[/.test(String(rootStyles[si].name))) continue;
+                rootStyles[si].move(LocationOptions.AT_END, destination);
+                moved++;
+            }
+        }
+        document.insertLabel(label,name);
+        return {namespace:name,reused:false,moved:moved};
+    }
+    function restoreCharacterStyleRoots(document){
+        var name=document.extractLabel('journal-merge-style-namespace');if(!name)return {moved:0};
+        var group=document.characterStyleGroups.itemByName(name);if(group.isValid===false)return {moved:0};
+        var children=group.characterStyleGroups.everyItem().getElements(),styles=group.characterStyles.everyItem().getElements(),moved=0;
+        for(var i=0;i<children.length;i++){children[i].move(LocationOptions.AT_END,document);moved++;}
+        for(var i=0;i<styles.length;i++){if(document.characterStyles.itemByName(styles[i].name).isValid!==false)throw Error('CHARACTER_ROOT_COLLISION '+styles[i].name);styles[i].move(LocationOptions.AT_END,document);moved++;}
+        group=document.characterStyleGroups.itemByName(name);if(!group.characterStyles.length&&!group.characterStyleGroups.length)group.remove();
+        return {moved:moved};
+    }
+    var characterDefinitionEvidence=[];
+    function characterStyleValue(v,key){
+        if(v===null||v===undefined||typeof v!=='object')return String(v);
+        if(v instanceof Array){var parts=[];for(var i=0;i<v.length;i++)parts.push(characterStyleValue(v[i],key));return '['+parts.join(',')+']';}
+        var name;try{name=v.name;}catch(unsupportedName){name=undefined;}
+        if(typeof name==='string')return 'name:'+name;
+        var result=String(v);if(result==='[object Object]')throw Error('CHARACTER_STYLE_VALUE '+key);return result;
+    }
+    function characterStyleSignature(style){
+        var p=style.properties,keys=[],values=[],ignored=/^(id|index|name|parent|label|properties|styleUniqueId|isValid|events|eventListeners|styleExportTagMaps|imported)$/;
+        for(var k in p)if(p.hasOwnProperty(k)&&!ignored.test(k))keys.push(k);keys.sort();
+        for(var i=0;i<keys.length;i++)values.push(keys[i]+':'+characterStyleValue(p[keys[i]],keys[i]));return values.join(String.fromCharCode(10));
+    }
+    function characterStyleIdentity(style){var p=style.parent;while(p&&p.constructor.name==='CharacterStyleGroup')p=p.parent;return p&&p.id!==undefined?p.id+':'+style.id:'';}
+    function registerCharacterDefinitionEvidence(a,b,proof){
+        if(!proof||!proof.sourceDefinition||proof.sourceDefinition!==proof.targetDefinition)throw Error('CHARACTER_RAW_DEFINITION_MISMATCH');
+        var sa=characterStyleSignature(a),sb=characterStyleSignature(b);
+        if(proof.sourceSignature!==undefined&&proof.sourceSignature!==sa)throw Error('CHARACTER_EVIDENCE_SOURCE_STALE');
+        if(proof.targetSignature!==undefined&&proof.targetSignature!==sb)throw Error('CHARACTER_EVIDENCE_TARGET_STALE');
+        characterDefinitionEvidence.push({a:characterStyleIdentity(a),b:characterStyleIdentity(b),sa:sa,sb:sb});
+    }
+    function sameCharacterStyle(a,b){
+        var aa=a.properties,bb=b.properties,keys={},ignored=/^(id|index|name|parent|label|properties|styleUniqueId|isValid|events|eventListeners|styleExportTagMaps|imported)$/,different=[];
+        for(var k in aa)if(aa.hasOwnProperty(k)&&!ignored.test(k))keys[k]=true;
+        for(var k in bb)if(bb.hasOwnProperty(k)&&!ignored.test(k))keys[k]=true;
+        for(var k in keys)if(keys.hasOwnProperty(k)&&characterStyleValue(aa[k],k)!==characterStyleValue(bb[k],k))different.push(k);
+        if(!different.length)return true;if(different.length!==1||different[0]!=='fontStyle')return false;
+        var ai=characterStyleIdentity(a),bi=characterStyleIdentity(b);if(!ai||!bi)return false;
+        for(var i=0;i<characterDefinitionEvidence.length;i++){var e=characterDefinitionEvidence[i];if(e.a===ai&&e.b===bi&&e.sa===characterStyleSignature(a)&&e.sb===characterStyleSignature(b))return true;}return false;
+    }
+    function mergePlacement(pageCount,sourcePages,range){
+        if(sourcePages<1||sourcePages!==Math.floor(sourcePages))throw Error('SOURCE_PAGE_COUNT');
+        var start=pageCount,removed=0;
+        if(range){if(range.length!==2||range[0]<0||range[1]<range[0]||range[1]>=pageCount||range[0]!==Math.floor(range[0])||range[1]!==Math.floor(range[1]))throw Error('REPLACE_RANGE');start=range[0];removed=range[1]-range[0]+1;}
+        return {start:start,end:start+sourcePages-1,removedPages:removed,expectedPages:pageCount-removed+sourcePages};
+    }
+    function characterStylePath(style){var parts=[style.name],parent=style.parent;while(parent&&parent.constructor.name==='CharacterStyleGroup'){parts.unshift(parent.name);parent=parent.parent;}return parts.join('/');}
+    function authoritativeCharacterStyleProvider(document,authority){
+        var token=authority.fsName+'|'+String(authority.modified)+'|'+authority.length;
+        for(var i=0;i<app.documents.length;i++)if(app.documents[i].extractLabel('journal-character-style-authority')===token)return app.documents[i];
+        var cache=File(document.fullName.parent.fsName+'/字符样式权威基准_'+authority.modified.getTime()+'_'+authority.length+'_QA.indd'),provider;
+        if(cache.exists){provider=app.open(cache,false);if(provider.extractLabel('journal-character-style-authority')!==token)throw Error('CHARACTER_AUTHORITY_CACHE_MISMATCH');}
+        else{provider=app.documents.add(false);provider.importStyles(ImportFormat.CHARACTER_STYLES_FORMAT,authority,GlobalClashResolutionStrategy.LOAD_ALL_WITH_OVERWRITE);provider.insertLabel('journal-character-style-authority',token);provider.save(cache);}
+        return provider;
+    }
+    function reconcileCharacterStyleDefaults(document,canonical){
+        var conflicts=characterStyleConflicts(document,canonical);if(conflicts.length)throw Error('CHARACTER_AUTHORITY_DEFINITION_MISMATCH '+conflicts.join(', '));return 0;
+    }
+    function adoptAuthoritativeCharacterStyles(document,authoritative,canonical,deferDefinitionVerification){
+        if(!/(QA|copy|副本)/i.test(document.name))throw Error('MERGE_QA_REQUIRED');
+        if(!authoritative||!authoritative.exists)throw Error('CHARACTER_STYLE_AUTHORITY_MISSING');
+        if(String(document.fullName.fsName).toLowerCase()===String(authoritative.fsName).toLowerCase())throw Error('SOURCE_EQUALS_TARGET');
+        document.importStyles(ImportFormat.CHARACTER_STYLES_FORMAT,authoritative,GlobalClashResolutionStrategy.LOAD_ALL_WITH_OVERWRITE);
+        if(!canonical&&typeof app!=='undefined')canonical=authoritativeCharacterStyleProvider(document,authoritative);
+        var cleared=canonical&&!deferDefinitionVerification?reconcileCharacterStyleDefaults(document,canonical):0;
+        return {authority:authoritative.fsName,scope:'character-styles-only',originalDefinitionsModified:false,staleDefaultsCleared:cleared,definitionsCompared:!!canonical&&!deferDefinitionVerification,authorityDocumentId:canonical?canonical.id:null};
+    }
+    function characterStyleConflicts(source,target){
+        function path(style){var parts=[style.name],parent=style.parent;while(parent&&parent.constructor.name==='CharacterStyleGroup'){parts.unshift(parent.name);parent=parent.parent;}return parts.join('/');}
+        var existing={},conflicts=[],a=source.allCharacterStyles,b=target.allCharacterStyles;
+        for(var i=0;i<b.length;i++)existing[path(b[i])]=b[i];
+        for(var i=0;i<a.length;i++){var name=path(a[i]);if(existing[name]&&!sameCharacterStyle(a[i],existing[name]))conflicts.push(name);}
+        return conflicts;
+    }
+    function reuseExistingCharacterStyles(document){
+        var styles=document.allCharacterStyles,reused=[],conflicts=[];
+        for(var i=styles.length-1;i>=0;i--){var st=styles[i];if(st.parent.constructor.name!=='CharacterStyleGroup'||!/^期刊排版_/.test(st.parent.name))continue;
+            var root=document.characterStyles.itemByName(st.name);if(root.isValid===false)continue;
+            if(!sameCharacterStyle(st,root)){conflicts.push(st.name);continue;}
+            var name=st.name;st.remove(root);reused.push(name);
+        }
+        var groups=document.characterStyleGroups.everyItem().getElements();for(var i=groups.length-1;i>=0;i--)if(/^期刊排版_/.test(groups[i].name)&&!groups[i].characterStyles.length&&!groups[i].characterStyleGroups.length)groups[i].remove();
+        return {reused:reused,conflicts:conflicts};
+    }
+    function relinkFigures(document, assets) {
+        if (!/(QA|copy|副本)/i.test(document.name)) throw Error('MERGE_QA_REQUIRED');
+        var changed=[];
+        function current(id,path){
+            var link=document.links.itemByID(id);
+            if(link.isValid!==false)return link.getElements()[0];
+            for(var i=0;i<document.links.length;i++)if(File(document.links[i].filePath).fsName===path)return document.links[i].getElements()[0];
+            throw Error('FIGURE_RELINK_RESULT_MISSING '+path);
+        }
+        for(var ai=0;ai<assets.length;ai++){
+            var asset=assets[ai],file=File(asset.path),found=0;
+            if(!file.exists)throw Error('FIGURE_LINK_SOURCE_MISSING '+asset.name);
+            for(var li=0;li<document.links.length;li++){
+                var link=document.links[li].getElements()[0];if(String(link.name)!==asset.name)continue;found++;
+                var previous=String(link.filePath),id=link.id,stage='capture';
+                try{
+                    if(File(previous).fsName.toLowerCase()===file.fsName.toLowerCase()&&link.status===LinkStatus.NORMAL){changed.push({name:asset.name,previous:previous,path:previous,changed:false});continue;}
+                    var bounds=[],graphics=document.allGraphics;for(var gi=0;gi<graphics.length;gi++)if(graphics[gi].itemLink&&graphics[gi].itemLink.id===id)bounds.push({frame:graphics[gi].parent.getElements()[0],bounds:graphics[gi].parent.geometricBounds.slice(0)});
+                    stage='relink';link.relink(file);stage='update';link=current(id,file.fsName);link.update();stage='bounds';
+                    for(var bi=0;bi<bounds.length;bi++)for(var edge=0;edge<4;edge++)if(Math.abs(bounds[bi].frame.geometricBounds[edge]-bounds[bi].bounds[edge])>.02)throw Error('FIGURE_RELINK_GEOMETRY_CHANGED');
+                    changed.push({name:asset.name,previous:previous,path:String(current(id,file.fsName).filePath),changed:true});
+                }catch(e){throw Error('FIGURE_RELINK_STAGE '+asset.name+' '+stage+' '+String(e));}
+            }
+            if(!found)throw Error('FIGURE_LINK_NOT_IN_DOCUMENT '+asset.name);
+        }
+        return changed;
+    }
+    return {characterStyleSignature:characterStyleSignature,registerCharacterDefinitionEvidence:registerCharacterDefinitionEvidence,prepare:prepare,relinkFigures:relinkFigures,restoreCharacterStyleRoots:restoreCharacterStyleRoots,reuseExistingCharacterStyles:reuseExistingCharacterStyles,sameCharacterStyle:sameCharacterStyle,characterStyleConflicts:characterStyleConflicts,adoptAuthoritativeCharacterStyles:adoptAuthoritativeCharacterStyles,reconcileCharacterStyleDefaults:reconcileCharacterStyleDefaults,mergePlacement:mergePlacement};
+}());

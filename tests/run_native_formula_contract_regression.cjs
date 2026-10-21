@@ -1,0 +1,12 @@
+const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),crypto=require('node:crypto'),assert=require('node:assert/strict');
+const {synchronize}=require('../2-导入_InDesign/journal_native_formula_contract.cjs');
+const root=fs.mkdtempSync(path.join(os.tmpdir(),'journal-formula-contract-')),hash=x=>crypto.createHash('sha256').update(x).digest('hex');
+try{
+ const key='a'.repeat(64),source='b'.repeat(64),sha=hash('idms'),aiSha=hash('ai'),dir=path.join(root,'outline-v2','aa',key);fs.mkdirSync(dir,{recursive:true});fs.writeFileSync(path.join(dir,'formula.idms'),'idms');fs.writeFileSync(path.join(dir,'formula.ai'),'ai');fs.writeFileSync(path.join(dir,'asset.json'),JSON.stringify({rule:{basePointSize:10.5,outlined:true,version:'outline-v2'},cacheKey:key,source:{sha256:source},artifacts:{idms:{sha256:sha},ai:{sha256:aiSha}}}));
+ const contract={number:1,cacheKey:key,sourceSha256:source,sha256:sha,ruleVersion:'outline-v2'},config={formulaCacheContract:[contract],formulaNumbers:[{number:1,displayNumber:'1'}],assets:[{kind:'formula',number:1,width:99,height:98}]},job={formulas:{mode:'legacy-pdf'},inputs:[{name:'formula-1',path:'old.pdf'},{name:'source',path:'source.docx'}]},evidence={rows:[{number:1,cacheType:'Group',actualType:'Group',scaleX:100,scaleY:100,hashLabel:sha,sha256:sha,cacheWidth:20,cacheHeight:10,actualWidth:20,actualHeight:10}]};
+ const result=synchronize(config,job,evidence,root);assert.equal(result.config.assets[0].width,20);assert.equal(result.job.formulas.mode,'native-idms');assert.equal(result.job.inputs.some(i=>i.name==='formula-1'),false);assert.equal(result.job.inputs.find(i=>i.name==='native-formula-1').sha256,sha);assert.equal(config.assets[0].width,99);assert.equal(job.formulas.mode,'legacy-pdf');
+ const scaled=structuredClone(evidence);scaled.rows[0].scaleX=101;assert.throws(()=>synchronize(config,job,scaled,root),/MEASUREMENT_MISMATCH/);
+ const changed=structuredClone(evidence);changed.rows[0].actualWidth=21;assert.throws(()=>synchronize(config,job,changed,root),/MEASUREMENT_MISMATCH/);
+ fs.writeFileSync(path.join(dir,'formula.idms'),'changed');assert.throws(()=>synchronize(config,job,evidence,root),/CACHE_HASH_CHANGED/);
+ console.log('PASS only matching native geometry, exact cache hashes and 100% scale replace stale PDF dimensions and dependencies');
+}finally{const boundary=fs.realpathSync(os.tmpdir())+path.sep,resolved=fs.realpathSync(root);if(!resolved.startsWith(boundary))throw Error('TEST_CLEANUP_BOUNDARY');fs.rmSync(resolved,{recursive:true});}

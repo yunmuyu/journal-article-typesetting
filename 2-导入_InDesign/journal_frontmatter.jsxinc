@@ -1,0 +1,391 @@
+/*
+ * InDesign 2020 / ExtendScript ES3.
+ * Silent front-matter formatter. Callers own document lifecycle and error reporting.
+ */
+var JournalFrontmatter = (function () {
+    var CONTRACT = {
+        frameTop: "FRAME_TOP_FIXED",
+        footerBottom: "FOOTER_BOTTOM_FIXED",
+        bodyStart: "BODY_START_FROM_INK"
+    };
+
+    function required(value, name) {
+        if (value === undefined || value === null) throw Error("FRONTMATTER_REQUIRED " + name);
+        return value;
+    }
+
+    function number(value, name) {
+        value = Number(required(value, name));
+        if (!isFinite(value)) throw Error("FRONTMATTER_NUMBER " + name);
+        return value;
+    }
+
+    function copyBounds(bounds) {
+        return [Number(bounds[0]), Number(bounds[1]), Number(bounds[2]), Number(bounds[3])];
+    }
+
+    function pushLog(log, code, detail) {
+        log.push({code: code, detail: detail});
+    }
+
+    function englishStyleContract(role, style) {
+        return {leading:Number(style.leading), spaceBefore:Number(style.spaceBefore), spaceAfter:Number(style.spaceAfter)};
+    }
+
+    function planEnglishTitle(lineCount, config) {
+        lineCount = Math.max(1, Math.floor(number(lineCount, "englishTitle.lineCount")));
+        config = config || {};
+        var upper = number(config.enTitleUpperLeadingPt === undefined ? 17 : config.enTitleUpperLeadingPt, "enTitleUpperLeadingPt");
+        var last = number(config.enTitleLastLeadingPt === undefined ? 17 : config.enTitleLastLeadingPt, "enTitleLastLeadingPt");
+        var gap = config.enTitleAuthorBaselineGapPt === undefined ? null : number(config.enTitleAuthorBaselineGapPt, "enTitleAuthorBaselineGapPt");
+        var lineLeadings = [], i;
+        for (i = 0; i < lineCount - 1; i++) lineLeadings.push(upper);
+        lineLeadings.push(last);
+        return {lineLeadings: lineLeadings, authorBaselineGapPt: gap};
+    }
+
+    function planGeometry(measurements, config) {
+        measurements = required(measurements, "measurements");
+        config = required(config, "config");
+        var frontAnchor = required(config.frontAnchor, "frontAnchor");
+        var footerAnchor = required(config.footerAnchor, "footerAnchor");
+        var frontTop = number(frontAnchor.top, "frontAnchor.top");
+        var frontLeft = number(frontAnchor.left, "frontAnchor.left");
+        var frontWidth = number(frontAnchor.width, "frontAnchor.width");
+        var frontBottom = Math.max(
+            frontTop + number(measurements.frontHeightMm, "frontHeightMm"),
+            number(measurements.frontInkBottomMm, "frontInkBottomMm")
+        );
+        var frontBounds = [frontTop, frontLeft, frontBottom, frontLeft + frontWidth];
+        var topHeight = number(config.topGrayHeightMm, "topGrayHeightMm");
+        var targetBodyInkTop = number(measurements.frontInkBottomMm, "frontInkBottomMm") + topHeight;
+        var topLeft = config.topGrayLeftMm === undefined ? frontLeft : number(config.topGrayLeftMm, "topGrayLeftMm");
+        var topWidth = config.topGrayWidthMm === undefined ? frontWidth : number(config.topGrayWidthMm, "topGrayWidthMm");
+        var topGrayBounds = [targetBodyInkTop - topHeight, topLeft, targetBodyInkTop, topLeft + topWidth];
+
+        var inputBody = required(measurements.bodyBounds, "bodyBounds");
+        var firstInk = required(measurements.bodyFirstInkTopMm, "bodyFirstInkTopMm");
+        if (inputBody.length < 2 || firstInk.length < 2) throw Error("FRONTMATTER_BODY_COLUMNS");
+        var bodyBounds = [], i;
+        for (i = 0; i < inputBody.length; i++) {
+            var body = copyBounds(inputBody[i]);
+            var bodyInk = number(firstInk[i], "bodyFirstInkTopMm[" + i + "]");
+            body[0] += targetBodyInkTop - bodyInk;
+            bodyBounds.push(body);
+        }
+
+        var footerBottom = number(footerAnchor.bottom, "footerAnchor.bottom");
+        var footerLeft = number(footerAnchor.left, "footerAnchor.left");
+        var footerWidth = number(footerAnchor.width, "footerAnchor.width");
+        var footerHeight = number(measurements.footerHeightMm, "footerHeightMm");
+        var footerBounds = [footerBottom - footerHeight, footerLeft, footerBottom, footerLeft + footerWidth];
+        var footerInkTop = footerBounds[0] + number(measurements.footerFirstInkOffsetMm, "footerFirstInkOffsetMm");
+        var targetBodyInkBottom = footerInkTop - number(config.footerInkGapMm, "footerInkGapMm");
+        bodyBounds[0][2] = targetBodyInkBottom + number(config.metadataFrameInsetMm, "metadataFrameInsetMm");
+
+        var lowerTop = targetBodyInkBottom + number(config.footerGuideOffsetMm, "footerGuideOffsetMm");
+        var lowerHeight = number(config.bottomGrayHeightMm, "bottomGrayHeightMm");
+        var lowerLeft = config.bottomGrayLeftMm === undefined ? footerLeft : number(config.bottomGrayLeftMm, "bottomGrayLeftMm");
+        var lowerWidth = config.bottomGrayWidthMm === undefined ? footerWidth : number(config.bottomGrayWidthMm, "bottomGrayWidthMm");
+        var bottomGrayBounds = [lowerTop, lowerLeft, lowerTop + lowerHeight, lowerLeft + lowerWidth];
+        var log = [];
+        pushLog(log, CONTRACT.frameTop, {topMm: frontTop, bottomMm: frontBottom});
+        pushLog(log, CONTRACT.bodyStart, {inkTopMm: targetBodyInkTop});
+        pushLog(log, CONTRACT.footerBottom, {bottomMm: footerBottom, topMm: footerBounds[0]});
+        pushLog(log, "BODY_FOOTER_INK_TARGET", {bodyInkBottomMm: targetBodyInkBottom, footerInkTopMm: footerInkTop});
+        return {
+            frontBounds: frontBounds,
+            topGrayBounds: topGrayBounds,
+            bodyBounds: bodyBounds,
+            footerBounds: footerBounds,
+            bottomGrayBounds: bottomGrayBounds,
+            targetBodyInkTopMm: targetBodyInkTop,
+            targetBodyInkBottomMm: targetBodyInkBottom,
+            separatorYmm: bottomGrayBounds[2],
+            log: log
+        };
+    }
+
+    function meaningful(value) {
+        return String(value).replace(/[\s\uFFFC\u0016]/g, "");
+    }
+
+    function resolveStyle(document, name) {
+        if (!name) return null;
+        var parts = String(name).split("/");
+        if (parts.length > 1) {
+            var group = document.paragraphStyleGroups.itemByName(parts[0]);
+            if (group.isValid) {
+                var nested = group.paragraphStyles.itemByName(parts.slice(1).join("/"));
+                if (nested.isValid) return nested;
+            }
+        }
+        var direct = document.paragraphStyles.itemByName(name);
+        if (direct.isValid) return direct;
+        throw Error("FRONTMATTER_STYLE " + name);
+    }
+
+    function classificationPlan(text) {
+        text = String(text);
+        var edits = [], pattern = /[ \u3000\t]*(文献标识码\s*[:：]|文章编号\s*[:：])/g, match;
+        while ((match = pattern.exec(text)) !== null) {
+            var before = match[0].substr(0, match[0].length - match[1].length);
+            if (before !== "\t") edits.push({start:match.index, before:before});
+        }
+        var normalized = text;
+        for (var i = edits.length - 1; i >= 0; i--) {
+            var edit = edits[i];
+            normalized = normalized.substr(0, edit.start) + "\t" + normalized.substr(edit.start + edit.before.length);
+        }
+        return {text:normalized, edits:edits};
+    }
+
+    function normalizeClassification(paragraph) {
+        var plan = classificationPlan(paragraph.contents);
+        // Edit only separators after run formatting, preserving all other character overrides.
+        for (var i = plan.edits.length - 1; i >= 0; i--) {
+            var edit = plan.edits[i];
+            if (edit.before.length) paragraph.characters.itemByRange(edit.start, edit.start + edit.before.length - 1).contents = "\t";
+            else paragraph.insertionPoints[edit.start].contents = "\t";
+        }
+        return plan.edits.length;
+    }
+
+    function writeParagraphs(document, frame, entries, styleMap, log) {
+        if (!entries) return;
+        var text = [], i;
+        for (i = 0; i < entries.length; i++) text.push(String(entries[i].text || ""));
+        if(frame.parentStory.textContainers.length!==1)throw Error("FRONTMATTER_THREADED_STORY");
+        frame.parentStory.contents = text.join("\r");
+        for (i = 0; i < entries.length; i++) {
+            var entry = entries[i], paragraph = frame.parentStory.paragraphs[i];
+            if (!paragraph) throw Error("FRONTMATTER_PARAGRAPH " + i);
+            var styleName = styleMap && styleMap[entry.role];
+            var style = resolveStyle(document, styleName);
+            if (style) paragraph.applyParagraphStyle(style, true);
+            applyRuns(paragraph, entry.runs || []);
+            if (entry.role === "classification") normalizeClassification(paragraph);
+            if (entry.role === "fund") {
+                paragraph.justification = Justification.LEFT_JUSTIFIED;
+                paragraph.appliedFont = app.fonts.itemByName("现 宋体");
+            }
+            var labelFont = null, colon = -1;
+            if (entry.role === "cnAbstract" || entry.role === "cnKeywords") labelFont = "黑体";
+            if (entry.role === "enAbstract" || entry.role === "enKeywords") labelFont = "思源黑体 CN\tBold";
+            if (entry.role === "fund") labelFont = "现 黑体";
+            if (labelFont) {
+                colon = String(paragraph.contents).search(/[:：]/);
+                if (colon < 0) throw Error("FRONTMATTER_LABEL " + entry.role);
+                var targetFont = app.fonts.itemByName(labelFont);
+                if (!targetFont.isValid || targetFont.status !== FontStatus.INSTALLED) throw Error("FRONTMATTER_LABEL_FONT " + labelFont);
+                paragraph.characters.itemByRange(0, colon).appliedFont = targetFont;
+            }
+            pushLog(log, "PARAGRAPH_ROLE", {index: i, role: String(entry.role)});
+        }
+    }
+
+    function applyRuns(paragraph, runs) {
+        for (var i = 0; i < runs.length; i++) {
+            var run = runs[i], start = Number(run.start), end = Number(run.end) - 1;
+            if (start < 0 || end < start || end >= paragraph.characters.length) throw Error("FRONTMATTER_RUN " + i);
+            var range = paragraph.characters.itemByRange(start, end);
+            if (run.position === "superscript") range.position = Position.SUPERSCRIPT;
+            else if (run.position === "subscript") range.position = Position.SUBSCRIPT;
+        }
+    }
+
+    function trimEnd(frame) {
+        var story = frame.parentStory;
+        while (story.characters.length) {
+            var value = String(story.characters[-1].contents);
+            if (value !== "\r" && value !== "\n" && value !== " " && value !== "\u0003") break;
+            story.characters[-1].remove()
+;
+        }
+    }
+
+    function inkBounds(line) {
+        if (!line || !meaningful(line.contents)) throw Error("FRONTMATTER_INK_LINE");
+        var outlines = line.createOutlines(false), bounds = [1e9, 1e9, -1e9, -1e9], i;
+        try {
+            for (i = 0; i < outlines.length; i++) {
+                var item = outlines[i], b = item.geometricBounds;
+                bounds = [Math.min(bounds[0], b[0]), Math.min(bounds[1], b[1]), Math.max(bounds[2], b[2]), Math.max(bounds[3], b[3])];
+            }
+        } finally {
+            for (i = 0; i < outlines.length; i++) if (outlines[i].isValid) outlines[i].remove();
+        }
+        if (bounds[0] === 1e9) throw Error("FRONTMATTER_INK_EMPTY");
+        return bounds;
+    }
+
+    function frameHeight(frame) {
+        var b = frame.geometricBounds;
+        return Number(b[2]) - Number(b[0]);
+    }
+
+    function fitFront(frame, anchor) {
+        var b = copyBounds(frame.geometricBounds);
+        b[0] = number(anchor.top, "frontAnchor.top");
+        b[1] = number(anchor.left, "frontAnchor.left");
+        b[3] = b[1] + number(anchor.width, "frontAnchor.width");
+        frame.geometricBounds = b;
+        frame.fit(FitOptions.FRAME_TO_CONTENT);
+        var height = frameHeight(frame);
+        frame.geometricBounds = [b[0], b[1], b[0] + height, b[3]];
+    }
+
+    function fitFooter(frame, anchor) {
+        frame.fit(FitOptions.FRAME_TO_CONTENT);
+        var height = frameHeight(frame);
+        var bottom = number(anchor.bottom, "footerAnchor.bottom");
+        var left = number(anchor.left, "footerAnchor.left");
+        frame.geometricBounds = [bottom - height, left, bottom, left + number(anchor.width, "footerAnchor.width")];
+    }
+
+    function applyTitleSpacing(document, frame, entries, config, log) {
+        if (!entries) return;
+        var titleIndex = -1, authorIndex = -1, i;
+        for (i = 0; i < entries.length; i++) {
+            if (entries[i].role === "enTitle") titleIndex = i;
+            if (entries[i].role === "enAuthor") authorIndex = i;
+        }
+        for (i = 0; i < entries.length; i++) if (entries[i].role === "cnAffiliation") {
+            var cnUnit = frame.parentStory.paragraphs[i];
+            if(cnUnit.lines.length>1){
+                var lastUnitLeading=cnUnit.lines[-1].leading;
+                for (var ci = 0; ci < cnUnit.lines.length-1; ci++) cnUnit.lines[ci].characters.everyItem().leading = 15;
+                cnUnit.lines[-1].characters.everyItem().leading=lastUnitLeading;
+            }
+        }
+        if (titleIndex < 0) return;
+        var paragraph = frame.parentStory.paragraphs[titleIndex];
+        var style = paragraph.appliedParagraphStyle;
+        paragraph.spaceBefore = style.spaceBefore;
+        paragraph.spaceAfter = style.spaceAfter;
+        var plan = planEnglishTitle(paragraph.lines.length, config);
+        for (i = 0; i < paragraph.lines.length; i++) {var lineLeading=plan.lineLeadings[i];if(i===paragraph.lines.length-1)lineLeading=Number(style.leading);paragraph.lines[i].characters.everyItem().leading=lineLeading;}
+        if (authorIndex >= 0) {
+            var author = frame.parentStory.paragraphs[authorIndex], authorStyle = author.appliedParagraphStyle;
+            author.leading = authorStyle.leading;
+            author.spaceBefore = authorStyle.spaceBefore;
+            author.spaceAfter = authorStyle.spaceAfter;
+        }
+        for (i = 0; i < entries.length; i++) if (entries[i].role === "enAffiliation") {
+            var unit = frame.parentStory.paragraphs[i], unitStyle = unit.appliedParagraphStyle;
+            unit.properties = englishStyleContract("enAffiliation", unitStyle);
+            for (var ui = 0; ui + 1 < unit.lines.length; ui++) unit.lines[ui].characters.everyItem().leading = 15;
+            unit.spaceBefore = unitStyle.spaceBefore;
+            unit.spaceAfter = unitStyle.spaceAfter;
+        }
+        document.recompose();
+        pushLog(log, "EN_TITLE_SPACING", {source: "paragraph-style", lineLeadings: plan.lineLeadings});
+    }
+
+    function apply(document, frames, data, config) {
+        required(document, "document");
+        frames = required(frames, "frames");
+        data = data || {};
+        config = required(config, "config");
+        var front = required(frames.front, "frames.front");
+        var footer = required(frames.footer, "frames.footer");
+        var bodyColumns = required(frames.bodyColumns, "frames.bodyColumns");
+        if (bodyColumns.length < 2) throw Error("FRONTMATTER_BODY_COLUMNS");
+        var log = [], oldRedraw = app.scriptPreferences.enableRedraw;
+        app.scriptPreferences.enableRedraw = false;
+        try {
+            if(config.preserveExistingParagraphs!==true){
+                writeParagraphs(document, front, data.front, config.styleMap || {}, log);
+                writeParagraphs(document, footer, data.footer, config.styleMap || {}, log);
+            }
+            trimEnd(front);
+            trimEnd(footer);
+            document.recompose();
+            fitFront(front, config.frontAnchor);
+            fitFooter(footer, config.footerAnchor);
+            document.recompose();
+            applyTitleSpacing(document, front, data.front, config, log);
+            fitFront(front, config.frontAnchor);
+            document.recompose();
+
+            var frontInk = inkBounds(front.lines[-1]);
+            var footerInk = inkBounds(footer.lines[0]);
+            var bodyBounds = [], firstInk = [];
+            for (var i = 0; i < bodyColumns.length; i++) {
+                bodyColumns[i].textFramePreferences.verticalJustification = VerticalJustification.TOP_ALIGN;
+                bodyColumns[i].textFramePreferences.insetSpacing = [0, 0, 0, 0];
+                bodyColumns[i].textFramePreferences.minimumFirstBaselineOffset = 0;
+                bodyColumns[i].textFramePreferences.firstBaselineOffset = FirstBaseline.ASCENT_OFFSET;
+                bodyBounds.push(copyBounds(bodyColumns[i].geometricBounds));
+                firstInk.push(inkBounds(bodyColumns[i].lines[0])[0]);
+            }
+            document.recompose();
+            var measurements = {
+                frontHeightMm: frameHeight(front),
+                frontInkBottomMm: frontInk[2],
+                bodyBounds: bodyBounds,
+                bodyFirstInkTopMm: firstInk,
+                footerHeightMm: frameHeight(footer),
+                footerFirstInkOffsetMm: footerInk[0] - footer.geometricBounds[0]
+            };
+            var plan = planGeometry(measurements, config);
+            front.geometricBounds = plan.frontBounds;
+            footer.geometricBounds = plan.footerBounds;
+            for (i = 0; i < bodyColumns.length; i++) bodyColumns[i].geometricBounds = plan.bodyBounds[i];
+            if (frames.topGray) {
+                frames.topGray.geometricBounds = plan.topGrayBounds;
+                frames.topGray.nonprinting = true;
+            }
+            if (frames.bottomGray) {
+                frames.bottomGray.geometricBounds = plan.bottomGrayBounds;
+                frames.bottomGray.nonprinting = true;
+            }
+            if (frames.separator) {
+                var separator = copyBounds(frames.separator.geometricBounds);
+                separator[0] = plan.separatorYmm;
+                separator[2] = plan.separatorYmm;
+                frames.separator.geometricBounds = separator;
+            }
+            document.recompose();
+            for (i = 0; i < plan.log.length; i++) log.push(plan.log[i]);
+            return {ok: true, log: log, measurements: measurements, plan: plan, warnings: []};
+        } finally {
+            app.scriptPreferences.enableRedraw = oldRedraw;
+        }
+    }
+
+    function refitExistingFront(document, front, bodyFrames, topGuide) {
+        var before = copyBounds(front.geometricBounds);
+        front.fit(FitOptions.FRAME_TO_CONTENT);
+        var fitted = copyBounds(front.geometricBounds);
+        front.geometricBounds = [before[0], before[1], before[0] + fitted[2] - fitted[0], before[3]];
+        document.recompose();
+        var delta = front.geometricBounds[2] - before[2], adjusted = [];
+        for (var i = 0; i < bodyFrames.length; i++) {
+            var frame = bodyFrames[i];
+            if (!frame.parentPage || frame.parentPage.id !== front.parentPage.id) continue;
+            var bounds = copyBounds(frame.geometricBounds);
+            if (bounds[0] + delta >= bounds[2]) throw Error('FRONTMATTER_BODY_CAPACITY');
+            bounds[0] += delta;
+            frame.geometricBounds = bounds;
+            adjusted.push(i);
+        }
+        if (topGuide) {
+            var guide = copyBounds(topGuide.geometricBounds);
+            guide[0] += delta; guide[2] += delta;
+            topGuide.geometricBounds = guide;
+        }
+        document.recompose();
+        if (front.overflows) throw Error('FRONTMATTER_REFIT_OVERFLOW');
+        return {deltaMm:delta, adjustedFrameIndices:adjusted};
+    }
+
+    return {
+        refitExistingFront: refitExistingFront,
+        classificationPlan: classificationPlan,
+        normalizeClassification: normalizeClassification,
+        englishStyleContract: englishStyleContract, planEnglishTitle: planEnglishTitle,
+        planGeometry: planGeometry,
+        apply: apply
+    };
+}());

@@ -1,0 +1,112 @@
+/* InDesign 2020 / ExtendScript ES3. Slot-only assembly and native component reuse. */
+var JournalSlotTemplate = (function () {
+    var REQUIRED = ["front-title", "front-abstract", "body-left", "body-right", "received-fund", "doi"];
+    var COMPONENT_KINDS = {formula: true, doi: true, "received-fund": true, gray: true, "continued-table": true};
+
+    function fail(code, detail) { throw Error(code + (detail ? " " + detail : "")); }
+    function aliases(item) { return String(item.extractLabel("journal-slot-aliases") || "").split(","); }
+    function hasAlias(item, name) {
+        var values = aliases(item);
+        for (var i = 0; i < values.length; i++) if (values[i] === name) return true;
+        return false;
+    }
+    function findSlot(document, name) {
+        var found = [], items = document.allPageItems;
+        for (var i = 0; i < items.length; i++) if (hasAlias(items[i], name)) found.push(items[i]);
+        if (found.length !== 1) fail("SLOT_COUNT", name + " " + found.length);
+        return found[0];
+    }
+    function slots(document) {
+        var result = {};
+        for (var i = 0; i < REQUIRED.length; i++) result[REQUIRED[i]] = findSlot(document, REQUIRED[i]);
+        if (result["front-title"].id !== result["front-abstract"].id) fail("FRONT_SLOT_STORY");
+        if (result["body-left"].parentStory.id !== result["body-right"].parentStory.id) fail("BODY_SLOT_STORY");
+        return result;
+    }
+    function componentMetadata(item) {
+        return {
+            key: item.extractLabel("journal-component-key"),
+            hash: item.extractLabel("journal-component-hash"),
+            kind: item.extractLabel("journal-component-kind")
+        };
+    }
+    function labelComponent(item, component) {
+        if (!component.key || !component.hash || !component.kind) fail("COMPONENT_METADATA");
+        if (!COMPONENT_KINDS[component.kind]) fail("COMPONENT_KIND", component.kind);
+        item.insertLabel("journal-component-key", String(component.key));
+        item.insertLabel("journal-component-hash", String(component.hash));
+        item.insertLabel("journal-component-kind", String(component.kind));
+    }
+    function exportComponent(item, component) {
+        var file = File(component.idmsPath);
+        if (file.exists && !component.allowReplace) fail("COMPONENT_IDMS_EXISTS", file.fsName);
+        labelComponent(item, component);
+        item.exportFile(ExportFormat.INDESIGN_SNIPPET, file);
+        return componentMetadata(item);
+    }
+    function duplicateLibraryComponent(libraryDocument, component, targetPage) {
+        var found = [], items = libraryDocument.allPageItems;
+        for (var i = 0; i < items.length; i++) {
+            var data = componentMetadata(items[i]);
+            if (data.key === component.key && data.hash === component.hash) found.push(items[i]);
+        }
+        if (found.length !== 1) fail("COMPONENT_LIBRARY_COUNT", component.key + " " + found.length);
+        var copy = found[0].duplicate(targetPage);
+        labelComponent(copy, component);
+        return copy;
+    }
+    function placeIdms(component, targetPage) {
+        var file = File(component.idmsPath);
+        if (!file.exists) fail("COMPONENT_IDMS_MISSING", file.fsName);
+        var placed = targetPage.place(file);
+        if (!placed || placed.length !== 1) fail("COMPONENT_IDMS_PLACE_COUNT", component.key);
+        var item = placed[0], data = componentMetadata(item);
+        if (data.key !== component.key || data.hash !== component.hash) fail("COMPONENT_IDENTITY", component.key);
+        return item;
+    }
+    function updateDoi(slot, value) {
+        if (value === undefined) return;
+        slot.contents = String(value);
+        slot.parentStory.insertLabel("journal-role", "doi");
+    }
+    function writeBody(slotMap, bodyText) {
+        if (bodyText === undefined) return;
+        slotMap["body-left"].parentStory.contents = String(bodyText);
+        slotMap["body-left"].parentStory.insertLabel("journal-role", "body");
+    }
+    function labeled(document, name) {
+        var found = [], items = document.allPageItems;
+        for (var i = 0; i < items.length; i++) if (String(items[i].label) === name) found.push(items[i]);
+        if (found.length > 1) fail("SLOT_AUX_LABEL", name + " " + found.length);
+        return found.length ? found[0] : null;
+    }
+    function apply(document, job) {
+        var slotMap = slots(document), components = job.components || [], created = [], i;
+        updateDoi(slotMap.doi, job.doiText);
+        writeBody(slotMap, job.bodyText);
+        if (job.frontmatter) {
+            if (typeof JournalFrontmatter === "undefined") fail("FRONTMATTER_MODULE_MISSING");
+            JournalFrontmatter.apply(document, {
+                front: slotMap["front-title"],
+                footer: slotMap["received-fund"],
+                bodyColumns: [slotMap["body-left"], slotMap["body-right"]],
+                topGray: labeled(document, "spacing-guide-top"),
+                bottomGray: labeled(document, "spacing-guide-bottom") || labeled(document, "spacing-guide-footer"),
+                separator: labeled(document, "article-footer-separator")
+            }, job.frontmatter.data, job.frontmatter.config);
+        }
+        for (i = 0; i < components.length; i++) {
+            var component = components[i], item;
+            if (component.mode === "idms") item = placeIdms(component, document.pages[component.pageIndex]);
+            else if (component.mode === "library") {
+                var library = app.documents.itemByName(component.libraryDocumentName);
+                if (!library.isValid) fail("COMPONENT_LIBRARY_NOT_OPEN", component.libraryDocumentName);
+                item = duplicateLibraryComponent(library, component, document.pages[component.pageIndex]);
+            } else fail("COMPONENT_MODE", component.mode);
+            if (component.bounds) item.geometricBounds = component.bounds;
+            created.push({key: component.key, hash: component.hash, itemId: item.id});
+        }
+        return {slots: REQUIRED, components: created};
+    }
+    return {requiredSlots: REQUIRED, findSlot: findSlot, validate: slots, apply: apply, exportComponent: exportComponent, duplicateLibraryComponent: duplicateLibraryComponent, placeIdms: placeIdms};
+}());

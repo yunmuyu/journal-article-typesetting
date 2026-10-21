@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const ctx=vm.createContext({Position:{NORMAL:0,SUBSCRIPT:1,SUPERSCRIPT:2}});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_layout_rules.jsxinc'),'utf8'),ctx);
+const p={contents:'表1  ΔKp的模糊规则表\r',insertionPoints:[{index:200}]};
+const tr={contents:'p',characters:[{index:206}],fontStyle:'Italic',position:1};
+const c={sourceCaptionRuns:[{paragraphText:'表1  ΔKp的模糊规则表',runs:[{start:5,end:6,italic:true},{start:6,end:7,italic:true,position:'subscript'}]}]};
+assert.equal(ctx.JournalLayout.sourceCaptionRange(p,tr,c),true);
+assert.equal(ctx.JournalLayout.sourceCaptionRange(p,{...tr,fontStyle:'Regular'},c),false);
+assert.equal(ctx.JournalLayout.sourceCaptionRange(p,{...tr,position:0},c),false);
+assert.equal(ctx.JournalLayout.sourceCaptionRange(p,{...tr,contents:'x'},c),false);
+assert.equal(ctx.JournalLayout.sourceCaptionRange(p,tr,{}),false);
+console.log('PASS source caption math requires matching text, offset, italic and script position');

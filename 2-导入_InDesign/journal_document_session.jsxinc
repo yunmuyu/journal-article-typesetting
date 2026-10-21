@@ -1,0 +1,131 @@
+var JournalDocumentSession = (function () {
+    function fail(code, detail) {
+        throw Error(code + (detail ? " " + detail : ""));
+    }
+
+    function fileOf(value) {
+        if (value && value.fsName) return File(value.fsName);
+        return File(value);
+    }
+
+    function normalizePath(value) {
+        var file;
+        if (value === null || value === undefined || String(value) === "") fail("TARGET_PATH_REQUIRED");
+        file = fileOf(value);
+        return String(file.fsName).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+    }
+
+    function assertQaPath(value) {
+        var file = fileOf(value);
+        var normalized = normalizePath(file);
+        var separator = normalized.lastIndexOf("\\");
+        var name = separator >= 0 ? normalized.substring(separator + 1) : normalized;
+        if (!/(qa|copy|副本)/i.test(name)) fail("PRODUCTION_PATH_FORBIDDEN", String(file.fsName));
+        return normalized;
+    }
+
+    function documentPath(document) {
+        if (!document) fail("TARGET_DOCUMENT_REQUIRED");
+        if (document.isValid === false) fail("TARGET_DOCUMENT_INVALID");
+        try {
+            return normalizePath(document.fullName);
+        } catch (error) {
+            fail("TARGET_DOCUMENT_PATH_UNAVAILABLE", String(error));
+        }
+    }
+
+    function matchesByPath(app, targetPath) {
+        var matches = [];
+        var i;
+        var candidate;
+        if (!app || !app.documents) fail("APP_DOCUMENTS_REQUIRED");
+        for (i = 0; i < app.documents.length; i += 1) {
+            candidate = app.documents[i];
+            if (candidate && candidate.saved === false) continue;
+            if (candidate && candidate.isValid !== false && documentPath(candidate) === targetPath) matches.push(candidate);
+        }
+        return matches;
+    }
+
+    function sessionFor(document, targetPath, openedHere) {
+        if(document.getElements)document=document.getElements()[0];
+        if (documentPath(document) !== targetPath) fail("TARGET_PATH_CHANGED", documentPath(document));
+        if (document.id === null || document.id === undefined) fail("TARGET_ID_UNAVAILABLE");
+        return {
+            document: document,
+            path: targetPath,
+            id: document.id,
+            openedHere: openedHere === true,
+            closed: false
+        };
+    }
+
+    function acquire(app, target) {
+        var file = fileOf(target);
+        var targetPath = assertQaPath(file);
+        var matches = matchesByPath(app, targetPath);
+        var document;
+        var afterOpen;
+        if (matches.length > 1) fail("TARGET_DOCUMENT_COUNT", String(matches.length));
+        if (matches.length === 1) return sessionFor(matches[0], targetPath, false);
+        var previousInteraction = app.scriptPreferences.userInteractionLevel;
+        try {
+            app.scriptPreferences.userInteractionLevel = UserInteractionLevels.NEVER_INTERACT;
+            document = app.open(file, false);
+        } finally {
+            app.scriptPreferences.userInteractionLevel = previousInteraction;
+        }
+        afterOpen = matchesByPath(app, targetPath);
+        if (afterOpen.length !== 1) fail("TARGET_DOCUMENT_COUNT", String(afterOpen.length));
+        if (afterOpen[0].id !== document.id) fail("TARGET_OPEN_RESULT_MISMATCH");
+        return sessionFor(document, targetPath, true);
+    }
+
+    function assertIdentity(document, session) {
+        var actualPath;
+        if (!session) fail("SESSION_REQUIRED");
+        if (session.closed) fail("SESSION_CLOSED");
+        actualPath = documentPath(document);
+        assertQaPath(actualPath);
+        if (actualPath !== session.path) fail("TARGET_PATH_CHANGED", "expected=" + session.path + " actual=" + actualPath);
+        if (document.id !== session.id) fail("TARGET_ID_CHANGED", "expected=" + session.id + " actual=" + document.id);
+        return document;
+    }
+
+    function save(document, session) {
+        assertIdentity(document, session);
+        document.save();
+        assertIdentity(document, session);
+        return true;
+    }
+
+    function close(document, session, saveOption, rejectPreopened) {
+        assertIdentity(document, session);
+        if (!session.openedHere) {
+            if (rejectPreopened === true) fail("SESSION_PREOPENED_CLOSE_FORBIDDEN");
+            return false;
+        }
+        document.close(saveOption);
+        session.closed = true;
+        return true;
+    }
+
+    function withReadOnlyDocument(app, target, action, saveOption) {
+        var state = acquire(app, target);
+        try {
+            return action(state.document, state);
+        } finally {
+            close(state.document, state, saveOption);
+        }
+    }
+
+    return {
+        withReadOnlyDocument: withReadOnlyDocument,
+        normalizePath: normalizePath,
+        assertQaPath: assertQaPath,
+        acquire: acquire,
+        assertIdentity: assertIdentity,
+        save: save,
+        close: close
+    };
+}());

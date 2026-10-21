@@ -1,0 +1,22 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+const context=vm.createContext({});vm.runInContext(fs.readFileSync('2-导入_InDesign/journal_layout_rules.jsxinc','utf8'),context);
+const style={name:'正文_wrd_1',leading:15,firstLineIndent:7.76111111111,leftIndent:0,rightIndent:0,justification:1,spaceBefore:0,spaceAfter:0};
+let clearOverrides;
+const paragraph={contents:'\uFFFC，\uFFFC\r',appliedParagraphStyle:{name:'公式'},leading:28,applyParagraphStyle(s,clear){this.appliedParagraphStyle=s;clearOverrides=clear;}};
+const labels={'formula-display':'unnumbered'};
+const item={label:'source-formula-7',parent:{constructor:{name:'Character'},paragraphs:[paragraph]},extractLabel:k=>labels[k]||'',insertLabel:(k,v)=>{labels[k]=v;}};
+const doc={allPageItems:[item],allParagraphStyles:[style]};
+assert.equal(context.JournalLayout.sourceFormulaNumbering(doc,{formulaNumbers:[{number:7,inline:true,displayNumber:null}]},true).length,0);
+assert.equal(paragraph.appliedParagraphStyle,style);
+assert.equal(clearOverrides,false);
+assert.equal(paragraph.leading,15);
+assert.equal(paragraph.pointSize,10.5);
+assert.equal(labels['formula-display'],'false');
+console.log('PASS explicit source inline classification restores body paragraph without clearing character formatting');
+
+vm.runInContext(fs.readFileSync('2-导入_InDesign/journal_article_assembly.jsxinc','utf8'),context);
+const inlineParagraph={allPageItems:[{label:'source-formula-7'},{label:'source-formula-8'}]};
+const manifest={entries:[{number:7,inline:true},{number:8,inline:true}]};
+assert.equal(context.JournalArticleAssembly.sourceInlineFormulaParagraph(inlineParagraph,manifest),true);
+manifest.entries[1].inline=false;assert.equal(context.JournalArticleAssembly.sourceInlineFormulaParagraph(inlineParagraph,manifest),false);
+assert.equal(context.JournalArticleAssembly.sourceInlineFormulaParagraph({allPageItems:[]},manifest),false);

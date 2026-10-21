@@ -1,0 +1,29 @@
+	String.prototype.codePointAt = function codePointAt(/*uint*/pos,  z,x,y)
+	//----------------------------------
+	// Implements ECMAScript's `String.prototype.codePointAt` function.
+	// In addition, the function's SIZE property is set to the number
+	// of consumed code units (0:None ; 1:RegularCharCode ; 2:Surrogate.)
+	// ---
+	// E.g  "012".codePointAt(1)                            =>  0x31
+	//      "a\uD863\uDFF0b".codePointAt(1)                 =>  0x28FF0  ; `this` is "a𨿰b"
+	//      "a\uD863\uDFF0b".codePointAt(2)                 =>  0xDFF0   ; inside the surrogate pair
+	//      "".codePointAt(0)                               =>  undefined
+	// ---
+	// => u24 (<= 0x10FFFF)  ;  callee.SIZE :: 0|1|2
+	{
+		z = -1 + this.length;
+		if( 0 > (pos|=0) || z < pos ) return callee.SIZE=0, void 0;
+
+		x = this.charCodeAt(pos);
+		if( 0xD800 > x || x > 0xDBFF || z==pos ) return callee.SIZE=1, x;
+
+		y = this.charCodeAt(1+pos);
+		if( 0xDC00 > y || y > 0xDFFF ) return callee.SIZE=1, x;
+
+		// Surrogate pair.
+		// 0x400*(lead-0xD800)  +  (trail-0xDC00) + 0x10000
+		//                     ie  0x2400+trail
+		// ---
+		return callee.SIZE=2, (0x400*(x-0xD800) + 0x2400 + y);
+	};
+

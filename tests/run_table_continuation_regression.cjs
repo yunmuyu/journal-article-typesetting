@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const ctx=vm.createContext({});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_layout_rules.jsxinc'),'utf8'),ctx);
+const page={id:1},first={id:10,parentPage:page},next={id:11,parentPage:page,geometricBounds:[30.2,17.5,110,103]};
+const cell=frame=>({texts:[{lines:[{insertionPoints:[{parentTextFrames:[frame]}]}]}]});
+const table={label:'source-table-1',rows:[{cells:[cell(first)]},{cells:[cell(first)]},{cells:[cell(next)]},{cells:[cell(next)]}]};
+const story={tables:[table],extractLabel:()=> 'body'},d={stories:[story],allPageItems:[]};
+const fragments=ctx.JournalLayout.continuedTableFragments(d);
+assert.equal(fragments.length,1);
+assert.equal(fragments[0].frame.id,11);
+assert.equal(ctx.JournalLayout.continuedTableIssues(d).length,1,'a missing continuation marker must block acceptance');
+const marker={label:fragments[0].key,contents:'（续表）',paragraphs:[{pointSize:9,leading:12}],parentPage:page,geometricBounds:[26,17.5,29.2,103],overflows:false};
+d.allPageItems=[marker];
+assert.equal(ctx.JournalLayout.continuedTableIssues(d).length,0);
+marker.geometricBounds[0]=100;marker.geometricBounds[2]=103.2;
+assert.equal(ctx.JournalLayout.continuedTableIssues(d).length,1,'a pasteboard or misplaced native marker cannot satisfy the gate');
+console.log('PASS continued-table fragment detection, missing-marker and actual-position gates');

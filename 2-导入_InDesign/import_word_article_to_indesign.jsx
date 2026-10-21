@@ -1,4 +1,4 @@
-﻿#target indesign
+#target indesign
 (function () {
     var CONFIG = {
         paragraphStyles: {
@@ -18,11 +18,15 @@
         fallbackBoldItalicFontNames: ["Times New Roman\tBold Italic", "Times New Roman Bold Italic", "TimesNewRomanPS-BoldItalicMT"],
         mathFontNames: ["Cambria Math", "Cambria Math\tRegular", "CambriaMath"],   // 数学符号 ∈ ∙ ⋯ × 等用 Cambria Math
         equalsFontNames: ["Symbol", "Symbol\tRegular", "Symbol\tMedium"],          // 等号 = 用 Symbol
-        heitiFontNames: ["黑体", "SimHei", "Heiti SC", "Heiti TC", "STHeiti", "Microsoft YaHei"],   // ≤ ≥ ＜ ＞ 用黑体（不要现黑体）
+        heitiFontNames: ["黑体", "SimHei", "Heiti SC", "Heiti TC", "STHeiti", "Microsoft YaHei"],   // ＜ ＞ 用黑体；≤ ≥ 单独使用宋体
         normalizeFullwidthEquals: true,                                            // 全角＝转半角=后再套 Symbol（用户确认）
         equalsSpaceSubscript: true,                                                // 等号前后各加一个下标空格
         kerningMethods: ["$ID/Metrics Roman only", "原始设定 - 仅罗马字"]            // 字偶间距：原始设定 - 仅罗马字
     };
+    if (typeof JournalImportRequest !== "undefined") {
+        JournalImportRequest.result = importArticle(JournalImportRequest.document, JournalImportRequest.target, JournalImportRequest.data, JournalImportRequest.deferRecompose === true);
+        return;
+    }
     if (app.documents.length === 0) { alert("请先打开目标 InDesign 文档。"); return; }
     app.doScript(main, ScriptLanguage.JAVASCRIPT, [], UndoModes.ENTIRE_SCRIPT, "导入整篇 Word JSON");
     function main() {
@@ -31,6 +35,12 @@
         var raw = file.read(); file.close(); var data = parseJSON(raw);
         if (!data || !data.blocks || !data.blocks.length) { alert("JSON 里没有可导入内容。"); return; }
         var target = getTargetInsertionPoint(doc); if (!target) { alert("请先把文字光标放到要导入的位置，或选中一个文本框。"); return; }
+        var report = importArticle(doc, target, data, false);
+        alert(buildReport(doc, report, data.summary));
+    }
+    function importArticle(doc, target, data, deferRecompose) {
+        if (!doc || !doc.isValid || !target || !target.isValid || !data || !data.blocks || !data.blocks.length) throw Error("IMPORT_INPUT");
+        if (target.parentStory.parent.id !== doc.id) throw Error("IMPORT_TARGET_DOCUMENT");
         var previousRedraw=app.scriptPreferences.enableRedraw;
         app.scriptPreferences.enableRedraw = false;
         try {
@@ -55,7 +65,9 @@
             }
             report.inserted++;
         }
-        doc.recompose(); alert(buildReport(doc, report, data.summary));
+        if (!deferRecompose) doc.recompose();
+        if (keys(report.missingPStyles).length || report.italicFontFailed || report.boldItalicFontFailed) throw Error("IMPORT_FORMAT_INCOMPLETE " + buildReport(doc, report, data.summary));
+        return report;
         } finally { app.scriptPreferences.enableRedraw=previousRedraw; }
     }
     function parseJSON(raw) { if (typeof JSON !== "undefined" && JSON.parse) return JSON.parse(raw); return eval("(" + raw + ")"); }
@@ -318,7 +330,10 @@
             if (code===0xFF0B) { try { c.contents="+"; } catch(e0){} continue; } // 全角＋ → 半角+（不改字体；提取器一般已转，这里兜底）
             if (code===0xFF61) { try { c.contents="。"; report.glyphNormalized++; } catch(e00) {} continue; }
             try { if (normalizeUnicodeSuperSubscript(c,code)) { report.glyphNormalized++; continue; } } catch(e01) {}
-            if (code===0x2264 || code===0x2265 || code===0xFF1C || code===0xFF1E || code===0x003C || code===0x003E || code===0xFF0D || code===0x2212) { // ≤ ≥ ＜ ＞ < > 及减号 －(全角U+FF0D) −(U+2212) → 黑体（现宋体无 U+FF0D 字形会缺字）
+            if (code===0x2264 || code===0x2265) {
+                var songFont=findInstalledFont(["宋体","SimSun"]);if(!songFont)throw Error("缺少公式比较符号字体：宋体");
+                c.appliedFont=songFont;c.fontStyle="Regular";report.songFixed=(report.songFixed||0)+1;
+            } else if (code===0xFF1C || code===0xFF1E || code===0x003C || code===0x003E || code===0xFF0D || code===0x2212) { // ＜ ＞ < > 及减号 －(全角U+FF0D) −(U+2212) → 黑体（现宋体无 U+FF0D 字形会缺字）
                 if (heitiFont) { try { c.appliedFont=heitiFont; report.heitiFixed++; } catch(e1) {} }
             } else if (code===0xFF1D || code===0x003D) { // 全角＝ 或 半角= → Symbol（+下标空格）
                 if (CONFIG.normalizeFullwidthEquals && code===0xFF1D) { try { c.contents="="; } catch(e2) {} }
@@ -345,8 +360,8 @@
         if (report.boldItalicFontFailed) lines.push("\n有 "+report.boldItalicFontFailed+" 处 Bold Italic 未能套 Times New Roman Bold Italic，请检查该字体是否已激活。");
         lines.push("\n字偶间距：" + (report.kerningApplied ? "已设为 原始设定-仅罗马字" : "⚠ 未能设置（请检查 InDesign 版本的字偶间距值）"));
         lines.push("数学符号套 Cambria Math："+report.mathFixed+" 处" + (findFont(CONFIG.mathFontNames)?"":"  ⚠ 未找到 Cambria Math 字体"));
-        lines.push("≤ ≥ ＜ ＞ 套黑体："+report.heitiFixed+" 处" + (findHeitiFont(doc)?"":"  ⚠ 未找到任何黑体/Heiti 字体（已排除现黑体）"));
-        lines.push("等号套 Symbol："+report.equalsFixed+" 处"+(CONFIG.equalsSpaceSubscript?"（前后加下标空格）":"") + (findFont(CONFIG.equalsFontNames)?"":"  ⚠ 未找到 Symbol 字体"));
+        lines.push("＜ ＞ 与减号套黑体："+report.heitiFixed+" 处" + (findHeitiFont(doc)?"":"  ⚠ 未找到任何黑体/Heiti 字体（已排除现黑体）"));
+        lines.push("≤ ≥ 套宋体："+(report.songFixed||0)+" 处");lines.push("等号套 Symbol："+report.equalsFixed+" 处"+(CONFIG.equalsSpaceSubscript?"（前后加下标空格）":"") + (findFont(CONFIG.equalsFontNames)?"":"  ⚠ 未找到 Symbol 字体"));
         lines.push("缺字字符归一化："+report.glyphNormalized+" 处（｡、可无歧义还原的 Unicode 上下标字符）");
         return lines.join("\n"); }
 })();

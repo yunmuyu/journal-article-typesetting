@@ -1,0 +1,12 @@
+const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
+let source=fs.readFileSync('2-导入_InDesign/journal_article_assembly.jsxinc','utf8');
+const seam=source.lastIndexOf('    return {');
+source=source.slice(0,seam)+"    insertNativeFormula=function(){throw Error('PLACE_ABORT');};\n"+source.slice(seam);
+const context=vm.createContext({});vm.runInContext(source,context);
+let removed=false;
+const story={contents:'A\uFFFCB',getElements(){return [this];},insertionPoints:[{},{}]};
+const old={label:'source-formula-1',parent:{constructor:{name:'Character'},parentStory:story,index:1},extractLabel:()=>'',remove(){removed=true;story.contents='AB';}};
+assert.throws(()=>context.JournalArticleAssembly.replaceNativeFormula({allPageItems:[old]},1,{}),/PLACE_ABORT/);
+assert.equal(removed,false,'failed placement must preserve existing formula');
+assert.equal(story.contents,'A\uFFFCB');
+console.log('PASS failed native replacement preserves existing formula and story text');

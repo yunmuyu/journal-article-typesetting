@@ -1,0 +1,17 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const ctx=vm.createContext({});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_layout_profile.jsxinc'),'utf8'),ctx);
+const chars=Array.from('参数J = 0.001 kg·m2\r',(_,index)=>({index,noBreak:index===0}));
+chars.itemByRange=(start,end)=>({set noBreak(value){for(let i=start;i<=end;i++)chars[i].noBreak=value;}});
+const paragraph={contents:'参数J = 0.001 kg·m2\r',insertionPoints:[{index:0}],characters:chars,startParagraph:0};
+const paragraphs=[paragraph];paragraphs.everyItem=()=>({getElements:()=>paragraphs});
+const body={paragraphs,overflows:false},d={allPageItems:[],recompose(){}};
+const profile={schemaVersion:1,figures:[],tables:[],placements:[],formulas:[],textRanges:[{paragraphText:paragraph.contents,start:2,end:17,text:'J = 0.001 kg·m2'}]};
+const before=chars.map(c=>c.noBreak);
+assert.throws(()=>ctx.JournalLayoutProfile.apply(d,body,profile,()=>{throw Error('panel capacity');}),/panel capacity/);
+assert.deepEqual(chars.map(c=>c.noBreak),before,'failed layout restores every original noBreak flag');
+ctx.JournalLayoutProfile.apply(d,body,profile,()=>[]);
+assert.ok(chars.slice(2,17).every(c=>c.noBreak));
+const changed=structuredClone(profile);changed.textRanges[0].text='wrong source';
+assert.throws(()=>ctx.JournalLayoutProfile.validate(d,body,changed),/PROFILE_TEXT_RANGE/);
+console.log('PASS semantic source text ranges, protected-token inheritance and failure rollback');

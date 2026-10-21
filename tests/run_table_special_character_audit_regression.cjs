@@ -1,0 +1,10 @@
+const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path'),assert=require('node:assert/strict');
+const context={};vm.createContext(context);vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_layout_rules.jsxinc'),'utf8'),context);
+const glyph={contents:{toString:()=> 'DOUBLE_LEFT_QUOTE'},position:1,fontStyle:'Regular'};
+const text={characters:{0:glyph,itemByRange(a,b){assert.equal(a,0);assert.equal(b,0);return {contents:'“'};}}};
+const matches=context.JournalLayout.sourceTableCharacterMatches;
+assert.equal(matches(text,0,'“',1,false),true);
+assert.equal(matches(text,0,'”',1,false),false);
+assert.equal(matches(text,0,'“',2,false),false);
+glyph.fontStyle='Italic';assert.equal(matches(text,0,'“',1,false),false);assert.equal(matches(text,0,'“',1,true),true);
+console.log('PASS enum-valued quotes compare as text while content and actual formatting remain strict');

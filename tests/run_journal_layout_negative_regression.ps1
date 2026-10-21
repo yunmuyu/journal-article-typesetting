@@ -30,7 +30,9 @@ $rows=[Collections.Generic.List[string]]::new()
 foreach($case in $cases){
  $script=$module+"`nvar c="+$json+@"
 ;
-var d=app.open(File(c.documentPath));app.activeDocument=d;JournalLayout.bind(d,c);
+var target=File(c.documentPath),wanted=String(target.fsName).toLowerCase(),d=app.open(target),targetId=d.id;
+function closeExact(){if(!d||!d.isValid)throw Error('TARGET_DOCUMENT_INVALID');var actual=String(d.fullName.fsName).toLowerCase();if(actual!==wanted)throw Error('TARGET_PATH_CHANGED');if(d.id!==targetId)throw Error('TARGET_ID_CHANGED');d.close(SaveOptions.NO);}
+JournalLayout.bind(d,c,false);
 var s=d.stories.itemByID(c.bindings[0].id),changed=false,answer='';
 try{
  answer=app.doScript(function(){
@@ -38,7 +40,7 @@ try{
   d.recompose();var r=JournalLayout.audit(d,c),codes=[];for(var i=0;i<r.errors.length;i++)codes.push(r.errors[i].code);return codes.join(',');
  },ScriptLanguage.JAVASCRIPT,[],UndoModes.ENTIRE_SCRIPT,'Journal negative regression');changed=true;
 }catch(e){answer='ERROR '+e+' LINE '+e.line;changed=true;}
-finally{d.close(SaveOptions.NO);}
+finally{closeExact();}
 answer;
 "@
  $got=[string]$app.DoScript($script,1246973031)
@@ -46,8 +48,9 @@ answer;
  $rows.Add("PASS $($case.name) detected $($case.want)")
 }
 # Source-content comparison must also reject a missing character, not only overset.
-$mutation='var d=app.open(File('+(ConvertTo-Json -InputObject $cfg.documentPath -Compress)+'));app.activeDocument=d;app.doScript(function(){d.stories.itemByID('+$cfg.bindings[0].id+').paragraphs[1].characters[0].remove();},ScriptLanguage.JAVASCRIPT,[],UndoModes.ENTIRE_SCRIPT,"Missing source text regression");"MUTATED";'
-$app.DoScript($mutation,1246973031)|Out-Null
+$fixturePathJson=ConvertTo-Json -InputObject $cfg.documentPath -Compress
+$mutation='var target=File('+$fixturePathJson+'),wanted=String(target.fsName).toLowerCase(),d=app.open(target),targetId=d.id;if(String(d.fullName.fsName).toLowerCase()!==wanted)throw Error("TARGET_PATH_CHANGED");app.doScript(function(){d.stories.itemByID('+$cfg.bindings[0].id+').paragraphs[1].characters[0].remove();},ScriptLanguage.JAVASCRIPT,[],UndoModes.ENTIRE_SCRIPT,"Missing source text regression");String(targetId);'
+$fixtureDocumentId=[int]$app.DoScript($mutation,1246973031)
 try{
  $failed=$false
  try{& (Join-Path $project '2-导入_InDesign\Invoke-JournalLayout.ps1') -ConfigPath $fixtureConfig -Mode Check|Out-Null}catch{$failed=$true}
@@ -55,7 +58,10 @@ try{
  $report=Get-Content -LiteralPath ([IO.Path]::ChangeExtension($cfg.auditPath,'.result.json')) -Raw -Encoding UTF8|ConvertFrom-Json
  if(-not @($report.errors|Where-Object{$_ -like 'CONTENT paragraph*'}).Count){throw 'CONTENT error missing'}
  $rows.Add('PASS missing-source-character detected CONTENT')
-}finally{$app.DoScript('app.activeDocument.close(SaveOptions.NO);"RESTORED";',1246973031)|Out-Null}
+}finally{
+ $closeScript='(function(){var wanted=String(File('+$fixturePathJson+').fsName).toLowerCase(),expectedId='+$fixtureDocumentId+',matches=[];for(var i=0;i<app.documents.length;i++){var candidate=app.documents[i];try{if(String(candidate.fullName.fsName).toLowerCase()===wanted)matches.push(candidate);}catch(ignore){}}if(matches.length!==1)throw Error("TARGET_DOCUMENT_COUNT "+matches.length);var d=matches[0];if(d.id!==expectedId)throw Error("TARGET_ID_CHANGED");d.close(SaveOptions.NO);return "RESTORED";})();'
+ $app.DoScript($closeScript,1246973031)|Out-Null
+}
 & (Join-Path $project '2-导入_InDesign\Invoke-JournalLayout.ps1') -ConfigPath $originalConfig -Mode Check|Out-Null
 Remove-Item -LiteralPath $fixture,$fixtureConfig -Force
 [IO.File]::WriteAllText($ReportPath,($rows -join "`n"),[Text.UTF8Encoding]::new($false))

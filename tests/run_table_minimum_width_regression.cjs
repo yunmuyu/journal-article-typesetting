@@ -1,0 +1,12 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const context=vm.createContext({});
+const source=fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_article_assembly.jsxinc'),'utf8');
+vm.runInContext(source,context);
+const fit=context.JournalArticleAssembly.defaultTableWidths;
+assert.equal(typeof fit,'function');
+const structure={widths:[100,2000],rows:[[{start:0,span:1},{start:1,span:1}]]};
+const widths=Array.from(fit([['轮次','内容']],structure));
+assert.ok(widths[0]>=7.4);
+assert.ok(Math.abs(widths.reduce((a,b)=>a+b)-85.5)<1e-8);
+assert.deepEqual(Array.from(fit([['A','B']],structure)),[85.5*100/2100,85.5*2000/2100]);
+console.log('PASS two-CJK table cells receive a usable minimum column width while total table width stays fixed');

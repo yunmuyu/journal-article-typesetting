@@ -27,7 +27,7 @@ if ($panels.Count -eq 0) {
     $backupRoot = Join-Path $env:LOCALAPPDATA ('JournalArticleTypesetting\backups\' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0,8))
     $panelIndex = 0
     foreach ($p in $panels) {
-        foreach ($name in @('import_word_article_to_indesign.jsx', '0文章.jsx', 'journal_layout_rules.jsxinc', 'journal_layout_and_check.jsx')) {
+        foreach ($name in @('import_word_article_to_indesign.jsx', '0文章.jsx', 'journal_layout_rules.jsxinc', 'journal_prepreview_gate.jsxinc', 'journal_bottom_plan.jsxinc', 'journal_layout_and_check.jsx')) {
             $fileSource=if($name -in @('import_word_article_to_indesign.jsx','0文章.jsx')){$src}else{Join-Path $PSScriptRoot $name}
             $fileHash=Get-Sha256 $fileSource
             $destination = Join-Path $p $name

@@ -60,3 +60,4 @@ work/
 outputs/
 local-validation/
 .recovery/
+/.local/

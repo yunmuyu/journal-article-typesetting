@@ -1,0 +1,186 @@
+/* InDesign 2020 / ExtendScript ES3. Blocking checks that must pass before preview export. */
+var JournalPrepreviewGate = (function () {
+    var BODY_SIZE = 10.5, MIN_BODY_LEADING = 14.8, MAX_BODY_LEADING = 16, DEFAULT_EMPTY_MM = 25, EPSILON = .08;
+
+    function meaningful(value) { return String(value).replace(/[\s\uFFFC\u0016]/g, ''); }
+    function finiteNumber(value) { var number = Number(value); return isFinite(number) ? number : null; }
+    function pageOfLine(line) {
+        try {
+            var frames = line.insertionPoints[0].parentTextFrames;
+            return frames.length ? frames[0].parentPage : null;
+        } catch (ignore) { return null; }
+    }
+    function pageName(page) { return page && page.isValid !== false ? String(page.name) : '?'; }
+    function pageIdentity(page) {
+        if (!page || page.isValid === false) return '?';
+        return String(Number(page.documentOffset)) + ':' + String(Number(page.id)) + ':' + pageName(page);
+    }
+    function paragraphPage(paragraph) {
+        try {
+            if (paragraph.lines.length) return pageOfLine(paragraph.lines[0]);
+            var frames = paragraph.insertionPoints[0].parentTextFrames;
+            return frames.length ? frames[0].parentPage : null;
+        } catch (ignore) { return null; }
+    }
+    function location(story, paragraph, paragraphIndex) {
+        return 'page ' + pageName(paragraphPage(paragraph)) + ' story ' + story.id + ' paragraph ' + paragraphIndex + ' style ' + paragraph.appliedParagraphStyle.name;
+    }
+    function rangeMetrics(range) {
+        return {size: finiteNumber(range.pointSize), leading: finiteNumber(range.leading)};
+    }
+    function invalidMetric(metrics) {
+        return metrics.size === null || metrics.leading === null || metrics.size <= 1 || metrics.leading <= 1;
+    }
+    function bodyMetricInvalid(metrics, maxLeading, minLeading) {
+        return metrics.size === null || Math.abs(metrics.size - BODY_SIZE) > .001 || metrics.leading === null || metrics.leading < (typeof minLeading === 'number' ? minLeading : MIN_BODY_LEADING) - .001 || metrics.leading > (typeof maxLeading === 'number' ? maxLeading : MAX_BODY_LEADING) + .001;
+    }
+    function add(errors, code, detail) { errors.push({code:code, detail:String(detail)}); }
+
+    function auditTextMetrics(context, errors, config) {
+        var stories = context.stories;
+        for (var storyIndex = 0; storyIndex < stories.length; storyIndex++) {
+            var story = stories[storyIndex], scopeRole = story.extractLabel('journal-role');
+            for (var paragraphIndex = 0; paragraphIndex < story.paragraphs.length; paragraphIndex++) {
+                var paragraph = story.paragraphs[paragraphIndex], paragraphRole = context.classify(paragraph, scopeRole), ranges = paragraph.textStyleRanges.everyItem().getElements();
+                for (var rangeIndex = 0; rangeIndex < ranges.length; rangeIndex++) {
+                    var range = ranges[rangeIndex], hasContent = meaningful(range.contents);
+                    if (!hasContent) continue;
+                    var metrics = rangeMetrics(range), detail = location(story, paragraph, paragraphIndex) + ' range ' + rangeIndex + ' size/leading ' + metrics.size + '/' + metrics.leading;
+                    if (invalidMetric(metrics)) add(errors, 'TEXT_METRIC_INVALID', detail);
+                    if (paragraphRole === 'body' && bodyMetricInvalid(metrics, typeof JournalLayout !== 'undefined' ? JournalLayout.bodyLeadingLimit(range, config || {}) : MAX_BODY_LEADING, typeof JournalLayout !== 'undefined' && typeof JournalLayout.bodyLeadingMinimum === 'function' ? JournalLayout.bodyLeadingMinimum(range, config || {}) : MIN_BODY_LEADING)) add(errors, 'BODY_METRIC', detail + ' expected 10.5/14.8-16');
+                    if (paragraph.tables.length && invalidMetric(metrics)) add(errors, 'TABLE_RESERVATION', detail);
+                }
+                if (!paragraph.tables.length) continue;
+                for (var nextIndex = paragraphIndex + 1; nextIndex < story.paragraphs.length; nextIndex++) {
+                    var next = story.paragraphs[nextIndex];
+                    if (!meaningful(next.contents)) continue;
+                    if (context.classify(next, scopeRole) !== 'body') break;
+                    var nextRanges = next.textStyleRanges.everyItem().getElements();
+                    for (var nextRangeIndex = 0; nextRangeIndex < nextRanges.length; nextRangeIndex++) {
+                        if (!meaningful(nextRanges[nextRangeIndex].contents)) continue;
+                        var nextMetrics = rangeMetrics(nextRanges[nextRangeIndex]);
+                        if (bodyMetricInvalid(nextMetrics, typeof JournalLayout !== 'undefined' ? JournalLayout.bodyLeadingLimit(nextRanges[nextRangeIndex], config || {}) : MAX_BODY_LEADING, typeof JournalLayout !== 'undefined' && typeof JournalLayout.bodyLeadingMinimum === 'function' ? JournalLayout.bodyLeadingMinimum(nextRanges[nextRangeIndex], config || {}) : MIN_BODY_LEADING)) add(errors, 'TABLE_STYLE_POLLUTION', location(story, next, nextIndex) + ' after table paragraph ' + paragraphIndex + ' size/leading ' + nextMetrics.size + '/' + nextMetrics.leading);
+                    }
+                    break;
+                }
+            }
+        }
+        var tables = context.tables;
+        for (var tableIndex = 0; tableIndex < tables.length; tableIndex++) {
+            for (var cellIndex = 0; cellIndex < tables[tableIndex].cells.length; cellIndex++) {
+                var cellRanges = tables[tableIndex].cells[cellIndex].texts[0].textStyleRanges.everyItem().getElements();
+                for (var cellRangeIndex = 0; cellRangeIndex < cellRanges.length; cellRangeIndex++) {
+                    if (!meaningful(cellRanges[cellRangeIndex].contents)) continue;
+                    var cellMetrics = rangeMetrics(cellRanges[cellRangeIndex]);
+                    if (invalidMetric(cellMetrics)) add(errors, 'TEXT_METRIC_INVALID', 'table ' + tableIndex + ' cell ' + cellIndex + ' range ' + cellRangeIndex + ' size/leading ' + cellMetrics.size + '/' + cellMetrics.leading);
+                }
+            }
+        }
+    }
+
+    function pageIndex(pages, page) {
+        if (!page) return -1;
+        var offset = Number(page.documentOffset);
+        for (var i = 0; i < pages.length; i++) if (Number(pages[i].documentOffset) === offset) return i;
+        return -1;
+    }
+    function sourceItem(item) { return /^source-(figure|formula|table)-/.test(String(item.label)); }
+    function horizontalOverlap(a, b) { return Math.min(a[3], b[3]) - Math.max(a[1], b[1]) > EPSILON; }
+    function auditEmptyRegions(document, config, context) {
+        var errors = [];
+        var pages = document.pages, bodyFrames = context.body.textContainers, pageHasContent = [], i;
+        for (i = 0; i < pages.length; i++) pageHasContent[i] = false;
+        for (i = 0; i < bodyFrames.length; i++) {
+            var frame = bodyFrames[i], framePageIndex = pageIndex(pages, frame.parentPage);
+            if (framePageIndex < 0) continue;
+            for (var lineIndex = 0; lineIndex < frame.lines.length; lineIndex++) if (meaningful(frame.lines[lineIndex].contents)) { pageHasContent[framePageIndex] = true; break; }
+            if (frame.tables.length) pageHasContent[framePageIndex] = true;
+        }
+        var items = document.allPageItems;
+        for (i = 0; i < items.length; i++) if (sourceItem(items[i])) {
+            var itemPageIndex = pageIndex(pages, items[i].parentPage);
+            if (itemPageIndex >= 0) pageHasContent[itemPageIndex] = true;
+        }
+        var lastContent = -1;
+        for (i = 0; i < pages.length; i++) if (pageHasContent[i]) lastContent = i;
+        if (lastContent < 0) { add(errors, 'TRAILING_BLANK_PAGE', 'article body has no page content'); return errors; }
+        for (i = 0; i < pages.length; i++) {
+            if (!pageHasContent[i] && i > lastContent) add(errors, 'TRAILING_BLANK_PAGE', 'page ' + pageName(pages[i]) + ' follows the last body content page');
+            else if (!pageHasContent[i] && i < lastContent) add(errors, 'EMPTY_ARTICLE_PAGE', 'page ' + pageName(pages[i]) + ' is empty before later body content');
+        }
+        var maxEmpty = config && typeof config.maxUnexplainedBlankMm === 'number' ? config.maxUnexplainedBlankMm : DEFAULT_EMPTY_MM;
+        for (i = 0; i < bodyFrames.length; i++) {
+            var bodyFrame = bodyFrames[i], bodyPageIndex = pageIndex(pages, bodyFrame.parentPage);
+            if (bodyPageIndex < 0 || bodyPageIndex >= lastContent) continue;
+            var occupiedBottom = context.visibleBottom(bodyFrame), frameBounds = bodyFrame.geometricBounds;
+            for (var itemIndex = 0; itemIndex < items.length; itemIndex++) {
+                var articleItem = items[itemIndex];
+                if (!sourceItem(articleItem) || pageIndex(pages, articleItem.parentPage) !== bodyPageIndex || !horizontalOverlap(frameBounds, articleItem.geometricBounds)) continue;
+                occupiedBottom = Math.max(occupiedBottom, Number(articleItem.geometricBounds[2]));
+            }
+            if (!isFinite(occupiedBottom)) add(errors, 'LARGE_EMPTY_REGION', 'page ' + pageName(bodyFrame.parentPage) + ' frame ' + i + ' is empty before later content');
+            else if (Number(frameBounds[2]) - occupiedBottom > maxEmpty) add(errors, 'LARGE_EMPTY_REGION', 'page ' + pageName(bodyFrame.parentPage) + ' frame ' + i + ' unexplained ' + (Number(frameBounds[2]) - occupiedBottom).toFixed(3) + ' mm');
+        }
+        return errors;
+    }
+
+    function lineBounds(line) {
+        try {
+            var baseline = Number(line.baseline), ascent = Math.abs(Number(line.ascent)), descent = Math.abs(Number(line.descent));
+            var bounds = [baseline - ascent, Number(line.horizontalOffset), baseline + descent, Number(line.endHorizontalOffset)];
+            for (var i = 0; i < 4; i++) if (!isFinite(bounds[i])) return null;
+            return bounds;
+        } catch (ignore) { return null; }
+    }
+    function makeLineBox(line, identity) {
+        var page = pageOfLine(line), bounds = lineBounds(line);
+        if (!page || !bounds || !meaningful(line.contents)) return null;
+        return {pageKey:pageIdentity(page), pageName:pageName(page), bounds:bounds, kind:identity.kind, owner:identity.owner, detail:identity.detail, paragraphStart:identity.paragraphStart};
+    }
+    function boxesOverlap(a, b) {
+        return Math.min(a.bounds[2], b.bounds[2]) - Math.max(a.bounds[0], b.bounds[0]) > EPSILON && Math.min(a.bounds[3], b.bounds[3]) - Math.max(a.bounds[1], b.bounds[1]) > EPSILON;
+    }
+    function auditOverlaps(document, context, errors) {
+        var boxes = [], stories = context.stories;
+        for (var storyIndex = 0; storyIndex < stories.length; storyIndex++) for (var paragraphIndex = 0; paragraphIndex < stories[storyIndex].paragraphs.length; paragraphIndex++) {
+            var paragraph = stories[storyIndex].paragraphs[paragraphIndex];
+            if (paragraph.tables.length) continue;
+            for (var lineIndex = 0; lineIndex < paragraph.lines.length; lineIndex++) { var textBox = makeLineBox(paragraph.lines[lineIndex], {kind:'text', owner:'story-' + stories[storyIndex].id, detail:'story ' + stories[storyIndex].id + ' paragraph ' + paragraphIndex + ' line ' + lineIndex, paragraphStart:Number(paragraph.insertionPoints[0].index)}); if (textBox) boxes.push(textBox); }
+        }
+        for (var tableIndex = 0; tableIndex < context.tables.length; tableIndex++) for (var cellIndex = 0; cellIndex < context.tables[tableIndex].cells.length; cellIndex++) {
+            var cellLines = context.tables[tableIndex].cells[cellIndex].texts[0].lines;
+            for (var tableLineIndex = 0; tableLineIndex < cellLines.length; tableLineIndex++) { var tableBox = makeLineBox(cellLines[tableLineIndex], {kind:'table', owner:'table-' + tableIndex, detail:'table ' + tableIndex + ' cell ' + cellIndex + ' line ' + tableLineIndex, paragraphStart:-1}); if (tableBox) boxes.push(tableBox); }
+        }
+        var items = document.allPageItems;
+        for (var itemIndex = 0; itemIndex < items.length; itemIndex++) {
+            var item = items[itemIndex];
+            if (!sourceItem(item) || !item.parentPage) continue;
+            var parentParagraphStart = -1;
+            try { if (item.parent && item.parent.paragraphs.length) parentParagraphStart = Number(item.parent.paragraphs[0].insertionPoints[0].index); } catch (ignore) {}
+            boxes.push({pageKey:pageIdentity(item.parentPage), pageName:pageName(item.parentPage), bounds:item.geometricBounds, kind:'item', owner:String(item.label), detail:String(item.label), paragraphStart:parentParagraphStart});
+        }
+        var reported = 0;
+        for (var first = 0; first < boxes.length; first++) for (var second = first + 1; second < boxes.length; second++) {
+            var a = boxes[first], b = boxes[second];
+            if (String(a.pageKey) != String(b.pageKey)) continue;
+            if (a.kind === 'table' && b.kind === 'table' && a.owner === b.owner) continue;
+            if (a.kind === 'item' && b.kind === 'item' && a.owner === b.owner) continue;
+            if (a.kind === 'item' && b.kind === 'text' && a.paragraphStart === b.paragraphStart) continue;
+            if (b.kind === 'item' && a.kind === 'text' && b.paragraphStart === a.paragraphStart) continue;
+            if (!boxesOverlap(a, b)) continue;
+            add(errors, 'GEOMETRY_OVERLAP', 'page ' + a.pageName + ' [' + a.pageKey + '] ' + a.detail + ' overlaps page ' + b.pageName + ' [' + b.pageKey + '] ' + b.detail);
+            reported++;
+            if (reported >= 50) return;
+        }
+    }
+
+    function audit(document, config, context) {
+        var errors = [];
+        auditTextMetrics(context, errors, config);
+        var emptyErrors = auditEmptyRegions(document, config, context);for (var emptyIndex = 0; emptyIndex < emptyErrors.length; emptyIndex++) errors.push(emptyErrors[emptyIndex]);
+        auditOverlaps(document, context, errors);
+        return errors;
+    }
+
+    return {audit:audit};
+}());

@@ -119,15 +119,21 @@ def test_install_bat_updates_both_aliases_and_backs_up(tmp_path: Path) -> None:
     panel = tmp_path / "appdata/Adobe/InDesign/Version 15.0-J/zh_CN/Scripts/Scripts Panel"
     panel.mkdir(parents=True)
     (panel / "0文章.jsx").write_text("old", encoding="utf-8")
+    target = panel / "期刊文章自动排版系统"
+    target.mkdir()
+    (target / "0文章.jsx").write_text("old-system", encoding="utf-8")
     env = dict(os.environ, W2ID_NO_PAUSE="1", APPDATA=str(tmp_path / "appdata"), LOCALAPPDATA=str(tmp_path / "local"))
     result = subprocess.run(["cmd.exe", "/d", "/c", str(ROOT / "2-导入_InDesign/安装脚本到InDesign-双击我.bat")], capture_output=True, env=env, timeout=30)
     assert result.returncode == 0, result.stderr.decode("utf-8", errors="replace")
     source = (ROOT / "2-导入_InDesign/import_word_article_to_indesign.jsx").read_bytes()
     for name in ("0文章.jsx", "import_word_article_to_indesign.jsx"):
-        assert (panel / name).read_bytes() == source
-    backups = list((tmp_path / "local/WordToInDesign/backups").rglob("0文章.jsx"))
+        assert (target / name).read_bytes() == source
+    assert (panel / "0文章.jsx").read_text(encoding="utf-8") == "old"
+    for name in ("journal_layout_rules.jsxinc", "journal_prepreview_gate.jsxinc", "journal_bottom_plan.jsxinc", "journal_layout_and_check.jsx"):
+        assert (target / name).read_bytes() == (ROOT / "2-导入_InDesign" / name).read_bytes()
+    backups = list((tmp_path / "local/JournalArticleTypesetting/backups").rglob("0文章.jsx"))
     assert len(backups) == 1
-    assert backups[0].read_text(encoding="utf-8") == "old"
+    assert backups[0].read_text(encoding="utf-8") == "old-system"
 
 
 class ExtractionRegression(unittest.TestCase):

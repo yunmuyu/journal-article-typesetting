@@ -1,0 +1,143 @@
+var JournalRegressionSnapshot = (function () {
+    var characterProperties = [
+        "fontStyle", "pointSize", "position", "baselineShift", "horizontalScale",
+        "verticalScale", "tracking", "leading", "kerningMethod", "capitalization",
+        "underline", "strikeThru", "noBreak", "ligatures", "fillTint", "strokeWeight"
+    ];
+    var paragraphProperties = [
+        "justification", "firstLineIndent", "leftIndent", "rightIndent",
+        "lastLineIndent", "spaceBefore", "spaceAfter", "startParagraph",
+        "keepWithNext", "keepAllLinesTogether", "keepFirstLines", "keepLastLines",
+        "hyphenation", "composer", "kinsokuType", "kinsokuSet", "mojikumi"
+    ];
+    function primitive(value) {
+        if (value === null || value === undefined) return null;
+        if (typeof value === "boolean" || typeof value === "string") return value;
+        if (typeof value === "number") return isFinite(value) ? value : null;
+        if (value instanceof Array) {
+            var result = [];
+            for (var i = 0; i < value.length; i++) result.push(primitive(value[i]));
+            return result;
+        }
+        return String(value);
+    }
+    function properties(item, names, unavailable, location) {
+        var out = {};
+        for (var i = 0; i < names.length; i++) {
+            try { out[names[i]] = primitive(item[names[i]]); }
+            catch (error) { unavailable.push({location:location,property:names[i],reason:String(error)}); }
+        }
+        return out;
+    }
+    function tabs(paragraph) {
+        var result = [], stops = paragraph.tabStops;
+        for (var i = 0; i < stops.length; i++) result.push({
+            position:Number(stops[i].position), alignment:Number(stops[i].alignment),
+            leader:String(stops[i].leader), alignmentCharacter:String(stops[i].alignmentCharacter)
+        });
+        return result;
+    }
+    function ranges(text, unavailable, location) {
+        var result = [], runs = text.textStyleRanges.everyItem().getElements();
+        for (var i = 0; i < runs.length; i++) {
+            var r = runs[i], item = properties(r, characterProperties, unavailable, location + "/run/" + i);
+            var start=Math.max(text.characters[0].index,r.characters[0].index);
+            var end=Math.min(text.characters[-1].index,r.characters[-1].index);
+            if(end<start)continue;
+            item.text = String(r.characters.itemByRange(start-r.characters[0].index,end-r.characters[0].index).contents);
+            item.start=start-text.characters[0].index;
+            item.font = String(r.appliedFont.name);
+            item.fontStatus = Number(r.appliedFont.status);
+            item.characterStyle = String(r.appliedCharacterStyle.name);
+            item.fillColor = String(r.fillColor.name);
+            item.language = String(r.appliedLanguage.name);
+            result.push(item);
+        }
+        return result;
+    }
+    function paragraph(p, ordinal, unavailable, location) {
+        return {
+            ordinal:ordinal, text:String(p.contents), style:String(p.appliedParagraphStyle.name),
+            properties:properties(p, paragraphProperties, unavailable, location),
+            tabs:tabs(p), ranges:ranges(p, unavailable, location)
+        };
+    }
+    function frame(f, firstPageIndex) {
+        return {page:f.parentPage ? f.parentPage.documentOffset-firstPageIndex : null,
+            bounds:primitive(f.geometricBounds), inset:primitive(f.textFramePreferences.insetSpacing),
+            firstBaseline:Number(f.textFramePreferences.firstBaselineOffset),
+            verticalJustification:Number(f.textFramePreferences.verticalJustification), label:String(f.label)};
+    }
+    function table(t, unavailable, location) {
+        var result = {label:String(t.label),rows:t.rows.length,columns:t.columns.length,
+            headerRowCount:t.headerRowCount,footerRowCount:t.footerRowCount,widths:[],cells:[]};
+        for (var i = 0; i < t.columns.length; i++) result.widths.push(Number(t.columns[i].width));
+        for (i = 0; i < t.cells.length; i++) {
+            var c = t.cells[i], cell = {row:c.parentRow.index,column:c.parentColumn.index,
+                rowSpan:c.rowSpan,columnSpan:c.columnSpan,text:String(c.contents),overflows:c.overflows,
+                height:Number(c.height),width:Number(c.width),paragraphs:[]};
+            cell.properties = properties(c,["topInset","bottomInset","leftInset","rightInset",
+                "verticalJustification","topEdgeStrokeWeight","bottomEdgeStrokeWeight",
+                "leftEdgeStrokeWeight","rightEdgeStrokeWeight"],unavailable,location+"/cell/"+i);
+            for (var j=0;j<c.paragraphs.length;j++) cell.paragraphs.push(paragraph(c.paragraphs[j],j,unavailable,location+"/cell/"+i+"/p/"+j));
+            result.cells.push(cell);
+        }
+        return result;
+    }
+    function compositeFonts(document, unavailable) {
+        var result=[];
+        for(var i=0;i<document.compositeFonts.length;i++){
+            var font=document.compositeFonts[i],entries=[];
+            for(var j=0;j<font.compositeFontEntries.length;j++) {
+                var entry=font.compositeFontEntries[j];
+                entries.push(properties(entry,["name","appliedFont","fontStyle","relativeSize",
+                    "horizontalScale","verticalScale","baselineShift"],unavailable,"composite/"+font.name+"/"+j));
+            }
+            result.push({name:String(font.name),entries:entries});
+        }
+        return result;
+    }
+    function capture(document, spec) {
+        var first=spec.articlePageRange[0],last=spec.articlePageRange[1],out={
+            schemaVersion:1,documentId:document.id,path:document.fullName.fsName,
+            articlePageRange:spec.articlePageRange,stories:[],objects:[],unavailable:[]
+        },i,j;
+        if(first<0||last>=document.pages.length)throw Error("REGRESSION_PAGE_RANGE");
+        for(i=0;i<spec.bindings.length;i++){
+            var binding=spec.bindings[i],s=document.stories.itemByID(binding.id);
+            if(!s.isValid)throw Error("REGRESSION_STORY_MISSING "+binding.role+"/"+binding.id);
+            var record={role:binding.role,paragraphs:[],frames:[],tables:[]};
+            for(j=0;j<s.paragraphs.length;j++)record.paragraphs.push(paragraph(s.paragraphs[j],j,out.unavailable,binding.role+"/p/"+j));
+            for(j=0;j<s.textContainers.length;j++)record.frames.push(frame(s.textContainers[j],first));
+            for(j=0;j<s.tables.length;j++)record.tables.push(table(s.tables[j],out.unavailable,binding.role+"/table/"+j));
+            out.stories.push(record);
+        }
+        var items=document.allPageItems;
+        for(i=0;i<items.length;i++){
+            var item=items[i],page=item.parentPage;
+            if(!page||page.documentOffset<first||page.documentOffset>last)continue;
+            if(!/^(source-figure-|source-formula-|spacing-guide|article-footer-separator)/.test(item.label))continue;
+            var object={label:String(item.label),type:String(item.constructor.name),
+                page:page.documentOffset-first,bounds:primitive(item.geometricBounds),
+                horizontalScale:Number(item.horizontalScale),verticalScale:Number(item.verticalScale),
+                graphicCount:item.allGraphics.length,links:[]};
+            for(j=0;j<item.allGraphics.length;j++){
+                var graphic=item.allGraphics[j],link=graphic.itemLink;
+                object.links.push({path:link?String(link.filePath):null,status:link?Number(link.status):null});
+            }
+            out.objects.push(object);
+        }
+        out.compositeFonts=compositeFonts(document,out.unavailable);
+        return out;
+    }
+    function json(v) {
+        if(v===null||v===undefined)return "null";
+        if(typeof v==="number")return isFinite(v)?String(v):"null";
+        if(typeof v==="boolean")return String(v);
+        if(typeof v==="string")return '"'+v.replace(/\\/g,"\\\\").replace(/"/g,'\\"').replace(/[\x00-\x1f]/g,function(c){return "\\u"+("000"+c.charCodeAt(0).toString(16)).slice(-4);})+'"';
+        var a=[],k;
+        if(v instanceof Array){for(k=0;k<v.length;k++)a.push(json(v[k]));return "["+a.join(",")+"]";}
+        for(k in v)if(v.hasOwnProperty(k))a.push(json(k)+":"+json(v[k]));return "{"+a.join(",")+"}";
+    }
+    return {capture:capture,json:json};
+}());

@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict');
+const {build}=require('../2-导入_InDesign/journal_tracking_request.cjs');
+const frames=[0,1,2].map(index=>({id:10+index,index,pageIndex:index<2?0:1,targetBottomMm:265}));
+const p=(start,first,last,length)=>({start,firstFrameId:first,lastFrameId:last,role:'body',text:'a'.repeat(length)});
+const measurement={frames,paragraphs:[p(1,10,10,60),p(2,11,11,70),p(3,11,12,80),p(4,12,12,500)]};
+const bottom={columns:[{id:11,status:'blocked'}]};
+assert.deepEqual(build(measurement,bottom,2).map(x=>x.start),[3,2]);
+assert.deepEqual(build(measurement,bottom).map(x=>x.start),[3,2,1]);
+for(const budget of [0,25,1.5])assert.throws(()=>build(measurement,bottom,budget),/TRACKING_REQUEST_BUDGET/);
+console.log('PASS tracking budgets exclude paragraphs wholly downstream of the blocked column while retaining cross-frame paragraphs');

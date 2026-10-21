@@ -1,0 +1,25 @@
+const fs = require('node:fs');
+const vm = require('node:vm');
+const assert = require('node:assert/strict');
+const context = vm.createContext({});
+vm.runInContext(fs.readFileSync('2-导入_InDesign/journal_layout_rules.jsxinc', 'utf8'), context);
+const check = context.JournalLayout.formulaCacheIssues;
+assert.equal(typeof check, 'function');
+const entry = {number: 1, cacheKey: 'current', sha256: 'IDMS', sourceSha256: 'SOURCE', ruleVersion: 'v2'};
+const labels = {'formula-cache-key': 'current', 'formula-idms-sha256': 'idms', 'formula-source-sha256': 'source', 'formula-rule-version': 'v2'};
+const item = {label: 'source-formula-1', extractLabel: key => labels[key] || ''};
+assert.equal(check({allPageItems: [item]}, {formulaCacheContract: [entry]}).length, 0);
+labels['formula-cache-key'] = '';
+assert.ok(check({allPageItems: [item]}, {formulaCacheContract: [entry]}).some(x => x.includes('formula-cache-key')));
+labels['formula-cache-key'] = 'current';
+labels['formula-rule-version'] = 'v1';
+assert.ok(check({allPageItems: [item]}, {formulaCacheContract: [entry]}).some(x => x.includes('formula-rule-version')));
+assert.ok(check({allPageItems: []}, {formulaCacheContract: [entry]}).some(x => x.includes('COUNT')));
+assert.ok(check({allPageItems: [item, item]}, {formulaCacheContract: [entry]}).some(x => x.includes('COUNT')));
+assert.equal(check({allPageItems: []}, {}).length, 0);
+console.log('PASS current native formula cache provenance, obsolete/missing/ambiguous whole-article groups');
+
+const {derive}=require('../2-导入_InDesign/complete_assembly_check_config.cjs');
+const derived=derive({}, {outputPath:'QA.indd',bindings:[],panels:[]}, {stories:[{role:'body',frames:[]}]}, {mode:'native-idms',entries:[entry]});
+assert.deepEqual(derived.formulaCacheContract,[entry]);
+assert.throws(()=>derive({}, {bindings:[],panels:[]}, {stories:[{role:'body',frames:[]}]}, {mode:'native-idms',entries:[{number:1}]}),/FORMULA_CACHE_CONTRACT_MISSING/);

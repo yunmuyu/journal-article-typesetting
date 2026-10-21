@@ -1,0 +1,108 @@
+﻿/* Incremental structure solving; no author names, paragraph ordinals, or imported text. */
+var JournalReflow=(function(){
+    function fillBeforePanel(d,body,boundaryText,panelPage){
+        function key(t){return String(t).replace(/[\s\uFFFC\u0016]/g,'');}
+        var boundary=null,paragraphs=[],saved=[],before=String(body.contents);
+        for(var pi=0;pi<body.paragraphs.length;pi++)if(key(body.paragraphs[pi].contents)===key(boundaryText)){if(boundary)fail('PANEL_BOUNDARY_AMBIGUOUS');boundary=body.paragraphs[pi];}
+        if(!boundary)fail('PANEL_BOUNDARY_MISSING');
+        for(pi=0;pi<body.paragraphs.length;pi++){
+            var p=body.paragraphs[pi],name=String(p.appliedParagraphStyle.name).replace(/^journal-[^:]+::/,'');if(p.insertionPoints[0].index>boundary.insertionPoints[0].index)break;
+            if((name!=='正文'&&name!=='正文_wrd_1'&&name.indexOf('期刊正文_')!==0)||p.tables.length||!key(p.contents))continue;
+            var startOwners=p.insertionPoints[0].parentTextFrames;if(!startOwners.length||startOwners[0].parentPage.documentOffset===0)continue;
+            var ranges=p.textStyleRanges.everyItem().getElements();for(var ri=0;ri<ranges.length;ri++)saved.push({start:ranges[ri].characters[0].index,end:ranges[ri].characters[-1].index,leading:ranges[ri].leading});paragraphs.push(p);
+        }
+        function trial(value){for(var i=0;i<paragraphs.length;i++)paragraphs[i].leading=value;d.recompose();var owners=boundary.insertionPoints[-2].parentTextFrames;if(!owners.length)return false;return owners[0].parentPage.documentOffset<panelPage;}
+        try{
+            var lo=14.8,hi=16;if(!trial(lo))fail('PANEL_BOUNDARY_CAPACITY');
+            if(trial(hi))lo=hi;else for(var pass=0;pass<18;pass++){var mid=(lo+hi)/2;if(trial(mid))lo=mid;else hi=mid;}
+            var selected=Math.max(14.8,lo-.002);if(!trial(selected)||String(body.contents)!==before)fail('PANEL_BOUNDARY_CONTENT');
+            return {leading:selected,paragraphs:paragraphs.length,panelPage:panelPage};
+        }catch(error){for(var i=0;i<saved.length;i++)body.characters.itemByRange(saved[i].start,saved[i].end).leading=saved[i].leading;d.recompose();throw error;}
+    }
+    function fail(code,detail){throw Error(code+(detail===undefined?"":" "+detail));}
+    function bodyOf(d){var found=[];for(var i=0;i<d.stories.length;i++)if(d.stories[i].extractLabel("journal-role")==="body")found.push(d.stories[i]);if(found.length!==1)fail("REFLOW_BODY_COUNT");return found[0];}
+    function frame(d,id){var items=d.allPageItems;for(var i=0;i<items.length;i++)if(items[i].id===id&&items[i].constructor.name==="TextFrame")return items[i];fail("REFLOW_FRAME",id);}
+    function endpoints(body,exceptPage){
+        var out=[],fs=body.textContainers;
+        for(var i=0;i<fs.length;i++)if(fs[i].parentPage.id!==exceptPage){
+            var ls=fs[i].lines;out.push(fs[i].id+":"+(ls.length?ls[0].insertionPoints[0].index:-1)+":"+(ls.length?ls[-1].insertionPoints[-1].index:-1));
+        }
+        return out.join("|");
+    }
+    function compactLastPage(d,body,request){
+        var a=frame(d,request.frameIds[0]),b=frame(d,request.frameIds[1]);
+        if(a.parentPage.id!==b.parentPage.id||a.parentPage.id!==d.pages[-1].id||body.textContainers[body.textContainers.length-1].id!==b.id)fail("FINAL_PAGE_IDENTITY");
+        var before=endpoints(body,a.parentPage.id),saved=[a.geometricBounds,b.geometricBounds],top=Math.max(saved[0][0],saved[1][0]);
+        var lo=top+10,hi=request.maximumBottomMm||Math.min(saved[0][2],saved[1][2]),calls=0;
+        function trial(bottom){var aa=a.geometricBounds,bb=b.geometricBounds;aa[2]=bottom;bb[2]=bottom;a.geometricBounds=aa;b.geometricBounds=bb;d.recompose();calls++;return !body.overflows;}
+        try{
+            if(!trial(hi))fail("FINAL_PAGE_ALREADY_OVERFLOW");
+            // Find the smallest feasible common height. InDesign keeps all source paragraph constraints.
+            for(var i=0;i<14;i++){var mid=(lo+hi)/2;if(trial(mid))hi=mid;else lo=mid;}
+            if(!trial(hi+.03)||endpoints(body,a.parentPage.id)!==before)fail("FINAL_PAGE_CHANGED_PREFIX");
+            return {frameIds:request.frameIds,bottomMm:hi+.03,recomposes:calls};
+        }catch(error){a.geometricBounds=saved[0];b.geometricBounds=saved[1];d.recompose();throw error;}
+    }
+    function apply(d,plan,refreshPanels){
+        if(!plan||plan.schemaVersion!==1||plan.documentId!==d.id)fail("REFLOW_PLAN_IDENTITY");
+        var body=bodyOf(d);if(body.id!==plan.storyId)fail("REFLOW_STORY_IDENTITY");
+        if(plan.tracking.length&&!plan.flowSignature)fail("REFLOW_MEASUREMENT_REQUIRED");
+        if(plan.flowSignature&&JournalLayoutMeasurement.flowSignature(body)!==plan.flowSignature)fail("REFLOW_MEASUREMENT_STALE");
+        var original=String(body.contents),ranges=[],leadingWrites=[],savedFrames=[],savedParagraphs=[],i,j;
+        var items=d.allPageItems;
+        for(i=0;i<items.length;i++)if(items[i].constructor.name==="TextFrame")savedFrames.push({item:items[i],bounds:items[i].geometricBounds});
+        for(i=0;i<body.paragraphs.length;i++)savedParagraphs.push({p:body.paragraphs[i],start:body.paragraphs[i].startParagraph});
+        for(i=0;i<plan.tracking.length;i++){
+            var q=plan.tracking[i],p=body.characters[q.start].paragraphs[0];
+            if(p.insertionPoints[0].index!==q.start||String(p.contents)!==q.text||Math.abs(q.tracking)>20)fail("REFLOW_TRACKING_SOURCE",q.start);
+            if(!q.context||JournalLayoutMeasurement.trackingContext(p)!==q.context)fail("REFLOW_TRACKING_CONTEXT_CHANGED",q.start);
+            var rs=p.textStyleRanges.everyItem().getElements();
+            for(j=0;j<rs.length;j++)ranges.push({kind:"tracking",start:Math.max(q.start,rs[j].characters[0].index),end:Math.min(p.characters[-1].index,rs[j].characters[-1].index),value:Number(rs[j].tracking)});
+        }
+        var compression=(plan.leadingCompression||[]).concat(plan.leadingExpansion||[]);
+        for(i=0;i<compression.length;i++){
+            var q=compression[i],range=body.characters.itemByRange(q.start,q.end-1);
+            var minLeading=14.8,maxLeading=16;if(q.role==="reference"||q.role==="bio"){minLeading=12.6;maxLeading=13.4;}
+            if(q.role&&JournalLayoutMeasurement.paragraphRole(body.characters[q.start].paragraphs[0])!==q.role)fail("REFLOW_LEADING_ROLE",q.start);
+            if(String(range.contents)!==q.text||q.leading<minLeading||q.leading>maxLeading)fail("REFLOW_LEADING_SOURCE",q.start);
+            var rs=range.textStyleRanges.everyItem().getElements();
+            for(j=0;j<rs.length;j++){
+                if((q.role==="reference"||q.role==="bio")&&Number(rs[j].pointSize)!==9)continue;
+                var first=Math.max(q.start,rs[j].characters[0].index),last=Math.min(q.end-1,rs[j].characters[-1].index);
+                ranges.push({kind:"leading",start:first,end:last,value:Number(rs[j].leading)});
+                leadingWrites.push({start:first,end:last,value:q.leading});
+            }
+        }
+        try{
+            var expandFinal=false;for(i=0;i<plan.tracking.length;i++)if(plan.tracking[i].finalPageExpansion===true)expandFinal=true;
+            if(expandFinal){var finalFrames=body.textContainers,maxBottom=0;for(i=0;i<finalFrames.length;i++)maxBottom=Math.max(maxBottom,Number(finalFrames[i].geometricBounds[2]));for(i=finalFrames.length-2;i<finalFrames.length;i++){var fb=finalFrames[i].geometricBounds;fb[2]=maxBottom;finalFrames[i].geometricBounds=fb;}}
+            for(i=0;i<plan.tracking.length;i++)body.characters[plan.tracking[i].start].paragraphs[0].tracking=plan.tracking[i].tracking;
+            for(i=0;i<leadingWrites.length;i++)body.characters.itemByRange(leadingWrites[i].start,leadingWrites[i].end).leading=leadingWrites[i].value;
+            d.recompose();
+            for(i=0;i<plan.tracking.length;i++){
+                var q=plan.tracking[i],p=body.characters[q.start].paragraphs[0],tokens=JournalLayout.protectedTokens(p);
+                if(p.lines.length!==q.expectedLineCount)fail("REFLOW_TRACKING_OUTCOME_CHANGED",q.start);
+                for(j=0;j<p.lines.length;j++){
+                    if(JournalLayout.orphanLine(p.lines[j]))fail("REFLOW_TRACKING_ORPHAN",q.start);
+                    var offset=p.lines[j].insertionPoints[0].index-q.start;
+                    for(var ti=0;ti<tokens.length;ti++)if(tokens[ti].start<offset&&tokens[ti].end>=offset)fail("REFLOW_TRACKING_TOKEN_BREAK",q.start);
+                }
+            }
+            var panels=refreshPanels(d,body);
+            var last=compactLastPage(d,body,plan.lastPageBalance);
+            if(String(body.contents)!==original||body.overflows)fail("REFLOW_CONTENT_CHANGED");
+            if(!plan.tracking.length&&!compression.length){
+                var changed=false;
+                for(i=0;i<savedFrames.length;i++){var currentBounds=savedFrames[i].item.geometricBounds;for(j=0;j<4;j++)if(Math.abs(currentBounds[j]-savedFrames[i].bounds[j])>.001)changed=true;}
+                if(!changed)fail("REFLOW_NO_PROGRESS");
+            }
+            return {tracking:plan.tracking.length,compressedLines:(plan.leadingCompression||[]).length,expandedLines:(plan.leadingExpansion||[]).length,panels:panels,lastPage:last};
+        }catch(error){
+            for(i=0;i<ranges.length;i++)body.characters.itemByRange(ranges[i].start,ranges[i].end)[ranges[i].kind]=ranges[i].value;
+            for(i=0;i<savedFrames.length;i++)savedFrames[i].item.geometricBounds=savedFrames[i].bounds;
+            for(i=0;i<savedParagraphs.length;i++)savedParagraphs[i].p.startParagraph=savedParagraphs[i].start;
+            d.recompose();throw error;
+        }
+    }
+    return {fillBeforePanel:fillBeforePanel,apply:apply,compactLastPage:compactLastPage};
+}());

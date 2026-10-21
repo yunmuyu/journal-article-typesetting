@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict');
+const {groups,build}=require('../2-导入_InDesign/journal_bottom_measurement_request.cjs');
+const frame={id:1,lines:[0,10,20].map((start,i)=>({start,end:start+10,frameId:1,role:'body',leading:[15,15.5,16][i],hasTable:false}))};
+const result=groups(frame);
+assert.deepEqual(result.map(g=>g.target.startIndex),[0,10], 'the first line affects the next baseline; the terminal line affects the next frame');
+const firstBaseline=30,originalBottom=firstBaseline+(15+15.5)*25.4/72;
+const leading=[15,15.5,16];
+for(const group of result)leading[group.target.startIndex/10]+=.2;
+assert.ok(Math.abs(firstBaseline+(leading[0]+leading[1])*25.4/72-originalBottom-.4*25.4/72)<1e-9);
+const m={schemaVersion:1,overflows:false,localBottomPairs:[],tables:[],figures:[],documentId:1,storyId:1,frames:[0,1,2,3].map(index=>({index,id:index+1,pageIndex:Math.floor(index/2),bounds:[26,0,index<2?265:120,85.5],bottomMm:100,inkBottomMm:100.5,targetBottomMm:264.3445,endpoint:[index*10,index*10+5],lines:[{start:index*10,end:index*10+5,frameId:index+1,role:index===1?'formula':'body',leading:15,baseline:100,descent:.5,hasTable:false}]}))};
+const request=build(m),formula=request.columns.find(c=>c.id==='2');
+assert(Math.abs(formula.targetBottomPt*25.4/72-(264.3445-.005))<1e-9,'formula ink keeps a small inward margin so decimal rounding cannot force a column break');
+console.log('PASS bottom request targets actual baseline intervals and keeps formula ink inside the frame');

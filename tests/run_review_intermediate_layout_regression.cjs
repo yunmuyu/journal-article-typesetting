@@ -1,0 +1,10 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
+const script=fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/Invoke-JournalArticleReview.ps1'),'utf8');
+const guard=script.split('\n').find(line=>line.includes("throw 'REVIEW_NON_LAYOUT_CHECK_FAILED'"));
+const accepted=new RegExp(guard.match(/-notmatch '([^']+)'/)[1]);
+for(const error of ['BOTTOM: 2/1','LAST_PAGE_BALANCE:','LOCAL_BOTTOM: 0','LARGE_EMPTY_REGION: page 5','FOOTER_SPACING: body ink','BODY_FRAME_WHITESPACE: first page'])assert.ok(accepted.test(error),error);
+for(const error of ['CELL_OVERSET: 1/2','SOURCE_TEXT_FORMAT:','CONTINUATION_REVIEW 0','FONT: missing'])assert.equal(accepted.test(error),false,error);
+const finalCheck=script.slice(script.indexOf("if($bottom.status -eq 'ready')"),script.indexOf("$tracking=Join-Path"));
+assert.ok(finalCheck.includes("-Mode Check -ExportPreview"));
+assert.ok(!finalCheck.includes('AllowValidationFailure'));
+console.log('PASS intermediate layout problems can reflow while content errors and final checks remain strict');
