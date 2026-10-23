@@ -768,8 +768,10 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
             for(var ei=0;ei<exceptions.length;ei++)if(exceptions[ei].reason&&Number(exceptions[ei].storyId)===Number(stories[si].id)&&String(exceptions[ei].paragraphText)===text.replace(/\r$/,''))excepted=true;
             if(excepted)continue;
             if(!isFinite(expected)||expected<=0){errors.push(where+' BODY_INDENT_TEMPLATE');continue;}
+            var contractForStyle=contract&&contract.verified===true&&contract.source&&contract.styleName===String(p.appliedParagraphStyle.name);
+            var verified=contractForStyle&&typeof contract.firstLineIndentPt==='number'&&Math.abs(measurementPt(expected)-contract.firstLineIndentPt)<.05;
+            if(contractForStyle&&!verified){errors.push(where+' BODY_INDENT_CONTRACT style='+measurementPt(expected)+'pt expected='+contract.firstLineIndentPt+'pt');continue;}
             if(!isFinite(actual)||Math.abs(actual-expected)>.001){
-                var verified=contract&&contract.verified===true&&contract.source&&contract.styleName===String(p.appliedParagraphStyle.name)&&typeof contract.firstLineIndentPt==='number'&&Math.abs(measurementPt(expected)-contract.firstLineIndentPt)<.05;
                 if(apply&&Math.abs(actual)<.001&&verified)p.firstLineIndent=p.appliedParagraphStyle.firstLineIndent;
                 else errors.push(where+' actual='+actual+' expected='+expected);
             }

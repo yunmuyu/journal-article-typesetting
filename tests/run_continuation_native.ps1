@@ -4,12 +4,15 @@ $outputRoot=[IO.Path]::GetFullPath($OutputDirectory)
 New-Item -ItemType Directory -Path $outputRoot -Force | Out-Null
 $root=Join-Path $PSScriptRoot '..\2-导入_InDesign'
 Import-Module (Join-Path $root 'JournalInDesignScript.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'NativeRegressionReport.psm1') -Force
 $env:JOURNAL_SCRIPT_ENGINE='journal-continuation-synthetic-regression'
 $prefix=[IO.File]::ReadAllText((Join-Path $root 'journal_regression_snapshot.jsxinc'))+"`n"+[IO.File]::ReadAllText((Join-Path $root 'journal_layout_rules.jsxinc'))
-$reportPath=Join-Path $outputRoot 'native-continuation.json'
+$runId=[guid]::NewGuid().ToString('N');$startedUtc=[DateTime]::UtcNow
+$reportPath=Join-Path $outputRoot ('native-continuation-'+$runId+'.json')
 $reportJson=ConvertTo-Json $reportPath -Compress
+$runIdJson=ConvertTo-Json $runId -Compress;$startedJson=ConvertTo-Json ($startedUtc.ToString('o')) -Compress
 $code=@"
-(function(){var d=null,r={passed:false,saved:false},oldUnit=app.scriptPreferences.measurementUnit,oldUI=app.scriptPreferences.userInteractionLevel;
+(function(){var d=null,r={passed:false,saved:false,run_id:$runIdJson,started_utc:$startedJson,source_sha256:'__SCRIPT_SHA256__'},oldUnit=app.scriptPreferences.measurementUnit,oldUI=app.scriptPreferences.userInteractionLevel;
 function check(ok,message){if(!ok)throw Error(message);}
 try{
 app.scriptPreferences.measurementUnit=MeasurementUnits.MILLIMETERS;app.scriptPreferences.userInteractionLevel=UserInteractionLevels.NEVER_INTERACT;
@@ -43,11 +46,11 @@ check(Math.abs(Number(next.geometricBounds[0])-20)<.001,'second frame top must b
 check(JournalLayout.continuedTableIssues(d).length===0,'final continuation gate must pass');
 r.passed=true;r.removed=result.removedMarkers;r.restored=result.restoredFrames;
 }catch(e){r.error=String(e);r.line=e.line;}finally{try{if(d)d.close(SaveOptions.NO);}catch(closeError){r.closeError=String(closeError);r.passed=false;}var f=File($reportJson);f.encoding='UTF-8';f.open('w');f.write(JournalRegressionSnapshot.json(r));f.close();app.scriptPreferences.measurementUnit=oldUnit;app.scriptPreferences.userInteractionLevel=oldUI;}
-}());
+return r.run_id;}());
 "@
+$hash=[Security.Cryptography.SHA256]::Create();$sourceSha=[BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($prefix+"`n"+$code))).Replace('-','').ToLowerInvariant()
+$code=$code.Replace('__SCRIPT_SHA256__',$sourceSha)
 $app=New-Object -ComObject InDesign.Application.2020
 $scriptResult=Invoke-JournalInDesignScript -Application $app -Code ($prefix+"`n"+$code)
-if(-not (Test-Path -LiteralPath $reportPath)){throw "Native regression did not write its report: $scriptResult"}
-$result=Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-if(-not $result.passed){throw ($result | ConvertTo-Json -Compress)}
+$result=Assert-NativeRegressionReport -Path $reportPath -RunId $runId -StartedUtc $startedUtc -SourceSha256 $sourceSha -ScriptResult ([string]$scriptResult)
 $result | ConvertTo-Json -Compress

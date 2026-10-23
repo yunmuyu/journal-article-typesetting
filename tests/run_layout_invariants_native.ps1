@@ -6,14 +6,17 @@ $imagePath=Join-Path $outputRoot 'synthetic.png'
 [IO.File]::WriteAllBytes($imagePath,[Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGP4z8AARAwQCgAf7gP9i18U1AAAAABJRU5ErkJggg=='))
 $root=Join-Path $PSScriptRoot '..\2-导入_InDesign'
 Import-Module (Join-Path $root 'JournalInDesignScript.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'NativeRegressionReport.psm1') -Force
 $env:JOURNAL_SCRIPT_ENGINE='journal-layout-synthetic-regression'
 $prefix=[IO.File]::ReadAllText((Join-Path $root 'journal_regression_snapshot.jsxinc'))
 foreach($file in @('journal_layout_rules.jsxinc','journal_article_assembly.jsxinc','journal_reflow.jsxinc')){$prefix+="`n"+[IO.File]::ReadAllText((Join-Path $root $file))}
-$reportPath=Join-Path $outputRoot 'native-layout-invariants.json'
+$runId=[guid]::NewGuid().ToString('N');$startedUtc=[DateTime]::UtcNow
+$reportPath=Join-Path $outputRoot ('native-layout-invariants-'+$runId+'.json')
 $reportJson=ConvertTo-Json $reportPath -Compress
+$runIdJson=ConvertTo-Json $runId -Compress;$startedJson=ConvertTo-Json ($startedUtc.ToString('o')) -Compress
 $imageJson=ConvertTo-Json $imagePath -Compress
 $code=@"
-(function(){var d=null,r={passed:false,saved:false},oldUnit=app.scriptPreferences.measurementUnit,oldUI=app.scriptPreferences.userInteractionLevel;
+(function(){var d=null,r={passed:false,saved:false,run_id:$runIdJson,started_utc:$startedJson,source_sha256:'__SCRIPT_SHA256__'},oldUnit=app.scriptPreferences.measurementUnit,oldUI=app.scriptPreferences.userInteractionLevel;
 function check(ok,message){if(!ok)throw Error(message);}
 function pt(v){return Number(v)*72/25.4;}
 try{
@@ -74,11 +77,11 @@ check(JournalLayout.inlineCaptionSpacing(d,false).length===0,'reflow changed nat
 r.indentPt=pt(s.paragraphs[1].firstLineIndent);r.captionGapPt=pt(s.paragraphs[3].leading);r.compressedLeadingPt=pt(s.paragraphs[1].leading);
 check(Math.abs(r.compressedLeadingPt-14.8)<.01,'body compression must be an actual 14.8pt');r.passed=true;
 }catch(e){r.error=String(e);r.line=e.line;}finally{try{if(d)d.close(SaveOptions.NO);}catch(closeError){r.closeError=String(closeError);r.passed=false;}var f=File($reportJson);f.encoding='UTF-8';f.open('w');f.write(JournalRegressionSnapshot.json(r));f.close();app.scriptPreferences.measurementUnit=oldUnit;app.scriptPreferences.userInteractionLevel=oldUI;}
-}());
+return r.run_id;}());
 "@
+$hash=[Security.Cryptography.SHA256]::Create();$sourceSha=[BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($prefix+"`n"+$code))).Replace('-','').ToLowerInvariant()
+$code=$code.Replace('__SCRIPT_SHA256__',$sourceSha)
 $app=New-Object -ComObject InDesign.Application.2020
 $scriptResult=Invoke-JournalInDesignScript -Application $app -Code ($prefix+"`n"+$code)
-if(-not (Test-Path -LiteralPath $reportPath)){throw "Native regression did not write its report: $scriptResult"}
-$result=Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
-if(-not $result.passed){throw ($result | ConvertTo-Json -Compress)}
+$result=Assert-NativeRegressionReport -Path $reportPath -RunId $runId -StartedUtc $startedUtc -SourceSha256 $sourceSha -ScriptResult ([string]$scriptResult)
 $result | ConvertTo-Json -Compress

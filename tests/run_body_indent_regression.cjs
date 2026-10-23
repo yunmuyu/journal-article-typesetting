@@ -11,9 +11,11 @@ const body=paragraph('正文_wrd_1',0),good=paragraph('正文',22*25.4/72),custo
 custom.appliedParagraphStyle.firstLineIndent=24*25.4/72;
 const nonzero=paragraph('正文_wrd_1',6,'合成局部缩进\r'),wrongStyle=paragraph('正文',0,'合成错误样式\r');
 wrongStyle.appliedParagraphStyle.firstLineIndent=0;
+const wrongContractDefault=paragraph('正文_wrd_1',24*25.4/72,'合成模板不匹配\r');
+wrongContractDefault.appliedParagraphStyle.firstLineIndent=24*25.4/72;
 const protectedParagraphs=['一级标题','二级标题','图注/表名','公式'].map(s=>paragraph(s,0,s==='公式'?'\r':s+'\r'));
 const anchor=paragraph('正文',0,'\u0016\r');anchor.tables=[{}];
-const story={id:2,extractLabel:()=> 'body',paragraphs:[body,good,custom,nonzero,wrongStyle,...protectedParagraphs],tables:[]};
+const story={id:2,extractLabel:()=> 'body',paragraphs:[body,good,custom,nonzero,wrongStyle,wrongContractDefault,...protectedParagraphs],tables:[]};
 const d={stories:[story],allParagraphStyles:[],allPageItems:[],recompose(){}};
 ctx.JournalLayout.applyTypography(d,{});
 assert.equal(body.firstLineIndent,0,'without a verified template contract, zero is reported but not overwritten');
@@ -28,7 +30,8 @@ const contract={bodyIndentContract:{styleName:'正文_wrd_1',firstLineIndentPt:2
 ctx.JournalLayout.bodyIndentation(d,true,contract);
 assert.equal(body.firstLineIndent,22*25.4/72,'verified contract repairs the exact zero drift');
 assert.equal(custom.firstLineIndent,0);assert.equal(nonzero.firstLineIndent,6);assert.equal(wrongStyle.firstLineIndent,0);
-assert.equal(ctx.JournalLayout.bodyIndentation(d,false,contract).length,3,'remaining issues stay visible to Check');
+assert.equal(wrongContractDefault.firstLineIndent,24*25.4/72,'incorrect template default is not silently changed');
+assert.equal(ctx.JournalLayout.bodyIndentation(d,false,contract).length,4,'Check reports a style default that conflicts with the verified 22pt contract even without a local override');
 body.firstLineIndent=0;
 const unverified={bodyIndentContract:{styleName:'正文_wrd_1',firstLineIndentPt:22,verified:false,source:'unconfirmed'}};
 ctx.JournalLayout.bodyIndentation(d,true,unverified);
@@ -44,5 +47,5 @@ assert.equal(body.firstLineIndent,22,'verified point-based script preferences us
 ctx.app.scriptPreferences.measurementUnit=units.MILLIMETERS;
 body.appliedParagraphStyle.firstLineIndent=22*25.4/72;body.firstLineIndent=22*25.4/72;
 const exception={...contract,bodyIndentExceptions:[{storyId:2,paragraphText:'合成局部缩进',reason:'manually approved local offset'}]};
-assert.equal(ctx.JournalLayout.bodyIndentation(d,false,exception).length,2,'documented exception skips only its exact paragraph');
+assert.equal(ctx.JournalLayout.bodyIndentation(d,false,exception).length,3,'documented exception skips only its exact paragraph');
 console.log('PASS verified zero-drift repair, unknown style/nonzero override review, explicit exception, non-prose protection and idempotency');
