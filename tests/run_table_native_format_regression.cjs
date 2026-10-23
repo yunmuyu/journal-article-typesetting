@@ -71,6 +71,9 @@ assert.deepEqual(Array.from(rules.sourceDecimalColumns([['1.2'],['2.3']],sourceS
   'equal digit shapes align naturally');
 assert.deepEqual(Array.from(rules.sourceDecimalColumns([['1'],['12']],sourceStructure)),[],
   'integer count columns do not enter the decimal rule');
+const mixedStructure={widths:[1],headerRows:0,rows:[[{start:0,span:1}],[{start:0,span:1}],[{start:0,span:1}]]};
+assert.deepEqual(Array.from(rules.sourceDecimalColumns([['1.2'],['12.3'],['12']],mixedStructure)),[0],
+  'an integer must not hide a decimal column that needs review');
 const decimalFrame={geometricBounds:[0,10,20,30]};
 const decimalCells=['1.2','12.3'].map((value,index)=>{
   const c=makeCell('right');c.contents=value;c.parentRow={index};c.parentColumn={index:0};
@@ -91,6 +94,19 @@ assert.deepEqual(Array.from(rules.tableNativeIssues(decimalTable)),[],
 decimalCells[1].texts[0].characters[2].horizontalOffset=20.3;
 assert(Array.from(rules.tableNativeIssues(decimalTable)).some(issue=>issue.code==='TABLE_DECIMAL_ALIGN'),
   'right alignment with equal indents is insufficient when decimal-point coordinates differ');
+const integerCell=makeCell('right');integerCell.contents='12';integerCell.parentRow={index:2};
+integerCell.parentColumn={index:0};integerCell.texts[0].justification='right';
+integerCell.texts[0].paragraphs=[{justification:'right',rightIndent:1.2}];
+decimalTable.rows.push({minimumHeight:5,height:5,autoGrow:true,cells:[integerCell]});
+decimalTable.cells.push(integerCell);decimalTable.columns[0].cells.push(integerCell);
+const mixedIssues=Array.from(rules.tableNativeIssues(decimalTable));
+assert(mixedIssues.some(issue=>issue.code==='TABLE_DECIMAL_ALIGN'),
+  'an integer cannot suppress a measured decimal-point drift');
+assert(mixedIssues.some(issue=>issue.code==='TABLE_DECIMAL_INTEGER_REVIEW'),
+  'the implicit decimal point of an integer requires explicit review');
+rules.normalizeOrdinaryTables([decimalTable],{tableKinds:[{number:4,kind:'ordinary'}]});
+assert(decimalCells.every(c=>c.texts[0].justification==='right'),
+  'mixed integer and decimal columns remain protected during normalization');
 const assemblyContext=vm.createContext({});
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_article_assembly.jsxinc'),'utf8'),assemblyContext);
 for(const kind of ['unclassified','algorithm','three-line'])

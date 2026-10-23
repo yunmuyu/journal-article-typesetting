@@ -37,7 +37,11 @@ numeric decimal column. A right-aligned paragraph or tab alone is not proof
 of alignment; unavailable geometry fails measurement. New assembly blocks a
 variable-shape decimal column before document acquisition with
 `TABLE_DECIMAL_ALIGNMENT_REVIEW_REQUIRED`, because the importer has no verified
-native alignment plan for it. Numeric-shape detection reuses the read-only
+native alignment plan for it. A column mixing integers and decimals is also
+blocked before acquisition; existing documents retain its alignment, measure
+all present decimal points, and report `TABLE_DECIMAL_INTEGER_REVIEW` because
+the integer's implied decimal position needs a reviewed rule. Numeric-shape
+detection reuses the read-only
 logic of the user's checker; its UI, selection changes and toggle formatting
 are excluded.
 

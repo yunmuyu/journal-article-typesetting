@@ -111,17 +111,18 @@ var JournalLayout = (function () {
         return {integer:dot<0?text.length:dot,decimal:dot<0?0:text.length-dot-1,hasDecimal:dot>=0};
     }
     function decimalColumnEvidence(values){
-        var shapes=[],integer={},decimal={},allDecimal=true;
+        var shapes=[],integer={},decimal={},decimalCount=0;
         for(var i=0;i<values.length;i++){
             var shape=numericShape(values[i]);if(!shape)continue;
-            shapes.push(shape);if(!shape.hasDecimal)allDecimal=false;
+            shapes.push(shape);if(shape.hasDecimal)decimalCount++;
             integer[shape.integer]=true;decimal[shape.decimal]=true;
         }
-        if(shapes.length<2||!allDecimal)return null;
+        if(shapes.length<2||!decimalCount)return null;
         var integerKinds=0,decimalKinds=0,key;
         for(key in integer)if(integer.hasOwnProperty(key))integerKinds++;
         for(key in decimal)if(decimal.hasOwnProperty(key))decimalKinds++;
-        return {count:shapes.length,integerVaries:integerKinds>1,decimalVaries:decimalKinds>1};
+        return {count:shapes.length,decimalCount:decimalCount,mixedInteger:decimalCount!==shapes.length,
+            integerVaries:integerKinds>1,decimalVaries:decimalKinds>1};
     }
     function sourceDecimalColumns(rows,structure){
         var columns=[],widths=structure.widths||[],header=structure.headerRows||0;
@@ -132,7 +133,7 @@ var JournalLayout = (function () {
                 if(sourceCell.start===col&&sourceCell.span===1)values.push(rows[row][c]);
             }
             var evidence=decimalColumnEvidence(values);
-            if(evidence&&(evidence.integerVaries||evidence.decimalVaries))columns.push(col);
+            if(evidence&&(evidence.mixedInteger||evidence.integerVaries||evidence.decimalVaries))columns.push(col);
         }
         return columns;
     }
@@ -147,7 +148,10 @@ var JournalLayout = (function () {
                 if(numericShape(cell.contents)){numeric.push(cell);values.push(cell.contents);}
             }
             var evidence=decimalColumnEvidence(values);
-            if(evidence)result.push({index:col,cells:numeric});
+            if(evidence){
+                var decimals=[];for(i=0;i<numeric.length;i++)if(numericShape(numeric[i].contents).hasDecimal)decimals.push(numeric[i]);
+                result.push({index:col,cells:decimals,mixedInteger:evidence.mixedInteger});
+            }
         }
         return result;
     }
@@ -210,6 +214,7 @@ var JournalLayout = (function () {
         }
         for(dc=0;dc<decimal.length;dc++){
             var points=decimal[dc].cells,origin=null;
+            if(decimal[dc].mixedInteger)issues.push({code:'TABLE_DECIMAL_INTEGER_REVIEW',detail:decimal[dc].index});
             for(var pi=0;pi<points.length;pi++){
                 var x=decimalPointX(points[pi]);
                 if(!finite(x)){issues.push({code:'TABLE_DECIMAL_MEASUREMENT',detail:decimal[dc].index+'/'+pi});break;}
