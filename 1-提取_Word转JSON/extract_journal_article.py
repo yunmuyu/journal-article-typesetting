@@ -180,6 +180,12 @@ def extract_article(source: Path, output: Path, body_start_text: str = '0 引言
                     record['displayNumber'] = number_match.group(1) if number_match and not record['inline'] else None
             return {'text': text, 'runs': runs, 'sourceText': plain, 'location': location, 'superscripts': [text.encode('utf-16-le')[r['start'] * 2:r['end'] * 2].decode('utf-16-le') for r in runs if r.get('position') == 'superscript'], 'subscripts': [text.encode('utf-16-le')[r['start'] * 2:r['end'] * 2].decode('utf-16-le') for r in runs if r.get('position') == 'subscript']}
 
+        def border_evidence(container, selector):
+            borders = container.find(selector, NS)
+            return {side: {'val': attr(edge, 'val'), 'sz': attr(edge, 'sz')}
+                    for side in ('top', 'bottom', 'left', 'right', 'insideH', 'insideV')
+                    if borders is not None and (edge := borders.find('w:' + side, NS)) is not None}
+
         for body_index, element in enumerate(body_items(body)):
             if element.tag == W + 'p':
                 record = parse_paragraph(element, {'bodyIndex': body_index, 'paragraphIndex': len(paragraphs)})
@@ -206,12 +212,16 @@ def extract_article(source: Path, output: Path, body_start_text: str = '0 引言
                         cells.append({'text': text.rstrip('\n'), 'runs': cell_runs, 'paragraphs': cell_paras})
                         span = int(attr(cell.find('w:tcPr/w:gridSpan', NS), 'val') or 1)
                         merge = cell.find('w:tcPr/w:vMerge', NS)
-                        structure_cells.append({'start': column, 'span': span, 'gridSpan': span, 'vertical': (attr(merge, 'val') or 'continue') if merge is not None else None, 'width': attr(cell.find('w:tcPr/w:tcW', NS), 'w'), 'widthType': attr(cell.find('w:tcPr/w:tcW', NS), 'type')})
+                        structure_cells.append({'start': column, 'span': span, 'gridSpan': span, 'vertical': (attr(merge, 'val') or 'continue') if merge is not None else None, 'width': attr(cell.find('w:tcPr/w:tcW', NS), 'w'), 'widthType': attr(cell.find('w:tcPr/w:tcW', NS), 'type'),
+                                                'borders': border_evidence(cell, 'w:tcPr/w:tcBorders')})
                         column += span
                     rows.append(cells)
                     structure_rows.append(structure_cells)
                 tables.append({'number': number, 'bodyIndex': body_index, 'rows': [[c['text'] for c in row] for row in rows], 'cellRuns': [[c['runs'] for c in row] for row in rows], 'cellParagraphs': [[c['paragraphs'] for c in row] for row in rows]})
-                structures.append({'number': number, 'widths': widths, 'rows': structure_rows, 'headerRows': header_rows, 'headerRowsSource': 'explicit-w:tblHeader', 'needsInput': [] if header_rows else ['headerRows not explicitly marked in source']})
+                structures.append({'number': number, 'widths': widths, 'rows': structure_rows, 'headerRows': header_rows, 'headerRowsSource': 'explicit-w:tblHeader',
+                                   'sourceFormatting': {'styleId': attr(element.find('w:tblPr/w:tblStyle', NS), 'val'),
+                                                        'borders': border_evidence(element, 'w:tblPr/w:tblBorders')},
+                                   'needsInput': [] if header_rows else ['headerRows not explicitly marked in source']})
     starts = [p['index'] for p in paragraphs if p['sourceText'].strip() == body_start_text.strip() or (body_start_text == '0 引言' and re.fullmatch(r'\s*0\s*引\s*言\s*', p['sourceText']))]
     start = starts[0] if len(starts) == 1 else None
     if start is None:
