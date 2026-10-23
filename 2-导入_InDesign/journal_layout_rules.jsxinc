@@ -145,14 +145,14 @@ var JournalLayout = (function () {
         }
         // Backups preserve the exact old marker if a later recomposition fails.
         var items=d.allPageItems;
+        try{
         for(var mi=0;mi<items.length;mi++){
             var match=String(items[mi].label).match(/^journal-continued-(source-table-[0-9]+)-([0-9]+)$/);
             if(!match||!tableLabels[match[1]]||!frameIds[Number(match[2])])continue;
-            var oldMarker=items[mi],backup=oldMarker.duplicate(oldMarker.parentPage);
+            var oldMarker=items[mi],oldRole=oldMarker.parentStory.extractLabel('journal-role'),backup=oldMarker.duplicate(oldMarker.parentPage);
+            markers.push({item:oldMarker,backup:backup,label:oldMarker.label,nonprinting:oldMarker.nonprinting,role:oldRole});
             backup.label='journal-continuation-rollback';backup.nonprinting=true;backup.parentStory.insertLabel('journal-role','');
-            markers.push({item:oldMarker,backup:backup,label:oldMarker.label,nonprinting:oldMarker.nonprinting});
         }
-        try{
             while(true){
                 fragments=continuedTableFragments(d);var active={},changed=false,state=[];
                 for(var i=0;i<fragments.length;i++)active[fragments[i].frame.id]=true;
@@ -195,9 +195,12 @@ var JournalLayout = (function () {
                 var record=markers[mi];
                 if(record.item.isValid){
                     if(record.item.parentPage.id!==record.backup.parentPage.id)record.item.move(record.backup.parentPage);
-                    record.item.geometricBounds=record.backup.geometricBounds;record.backup.remove();
+                    record.item.geometricBounds=record.backup.geometricBounds;
+                    record.item.label=record.label;record.item.nonprinting=record.nonprinting;
+                    record.item.parentStory.insertLabel('journal-role',record.role);
+                    record.backup.remove();
                 }else{
-                    record.backup.label=record.label;record.backup.nonprinting=record.nonprinting;record.backup.parentStory.insertLabel('journal-role','tableContinuation');
+                    record.backup.label=record.label;record.backup.nonprinting=record.nonprinting;record.backup.parentStory.insertLabel('journal-role',record.role);
                 }
             }
             d.recompose();throw error;
@@ -367,6 +370,16 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
         return R.captionGap;
     }
 
+    function measurementPt(value){
+        var unit=app.scriptPreferences.measurementUnit,n=Number(value);
+        if(unit===MeasurementUnits.POINTS||String(unit)==='AUTO_VALUE')return n;
+        if(unit===MeasurementUnits.MILLIMETERS)return n*72/25.4;
+        if(unit===MeasurementUnits.CENTIMETERS)return n*72/2.54;
+        if(unit===MeasurementUnits.INCHES)return n*72;
+        if(unit===MeasurementUnits.PICAS)return n*12;
+        throw Error('FIGURE_CAPTION_MEASUREMENT_UNIT');
+    }
+
     function inlineCaptionSpacing(d,apply){
         var errors=[],stories=scope(d),required=captionGapContract(),changed=false;
         for(var si=0;si<stories.length;si++){
@@ -384,9 +397,9 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
                     if(object.parent.constructor.name==='Character'&&object.allGraphics&&object.allGraphics.length){image=true;break;}
                 }
                 if(!image)continue;
-                var actual=Number(gap.leading),extra=Number(anchor.spaceAfter)+Number(gap.spaceBefore)+Number(gap.spaceAfter)+Number(p.spaceBefore);
+                var actual=measurementPt(gap.leading),extra=measurementPt(anchor.spaceAfter)+measurementPt(gap.spaceBefore)+measurementPt(gap.spaceAfter)+measurementPt(p.spaceBefore);
                 if(!isFinite(actual)||Math.abs(actual-required)>.001||!isFinite(extra)||Math.abs(extra)>.001){
-                    if(apply){gap.leading=required;anchor.spaceAfter=0;gap.spaceBefore=0;gap.spaceAfter=0;p.spaceBefore=0;changed=true;}
+                    if(apply){gap.leading=String(required)+'pt';anchor.spaceAfter=0;gap.spaceBefore=0;gap.spaceAfter=0;p.spaceBefore=0;changed=true;}
                     else errors.push(story.id+'/'+pi+' actual='+actual+' expected='+required+' additiveSpacing='+extra);
                 }
             }
@@ -745,15 +758,19 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
     function applyEnglishAffiliationSpacing(p){var base=Number(p.appliedParagraphStyle.leading);if(base!==25)throw Error('EN_AFFILIATION_STYLE_CONTRACT '+base);p.leading=base;for(var i=0;i+1<p.lines.length;i++)p.lines[i].characters.everyItem().leading=15;}
 
-    function bodyIndentation(d,apply){
-        var errors=[],stories=scope(d);
+    function bodyIndentation(d,apply,c){
+        var errors=[],stories=scope(d),contract=c&&c.bodyIndentContract,exceptions=c&&c.bodyIndentExceptions||[];
         for(var si=0;si<stories.length;si++)for(var pi=0;pi<stories[si].paragraphs.length;pi++){
             var p=stories[si].paragraphs[pi],text=String(p.contents);
             if(role(p,stories[si].extractLabel('journal-role'))!=='body'||!meaningful(text)||p.tables.length||/^\s*(?:图|表)\s*[0-9]+\s/.test(text))continue;
             var expected=Number(p.appliedParagraphStyle.firstLineIndent),actual=Number(p.firstLineIndent),where=stories[si].id+'/'+pi;
+            var excepted=false;
+            for(var ei=0;ei<exceptions.length;ei++)if(exceptions[ei].reason&&Number(exceptions[ei].storyId)===Number(stories[si].id)&&String(exceptions[ei].paragraphText)===text.replace(/\r$/,''))excepted=true;
+            if(excepted)continue;
             if(!isFinite(expected)||expected<=0){errors.push(where+' BODY_INDENT_TEMPLATE');continue;}
             if(!isFinite(actual)||Math.abs(actual-expected)>.001){
-                if(apply)p.firstLineIndent=p.appliedParagraphStyle.firstLineIndent;
+                var verified=contract&&contract.verified===true&&contract.source&&contract.styleName===String(p.appliedParagraphStyle.name)&&typeof contract.firstLineIndentPt==='number'&&Math.abs(measurementPt(expected)-contract.firstLineIndentPt)<.05;
+                if(apply&&Math.abs(actual)<.001&&verified)p.firstLineIndent=p.appliedParagraphStyle.firstLineIndent;
                 else errors.push(where+' actual='+actual+' expected='+expected);
             }
         }
@@ -840,7 +857,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
         if(config&&config.widePanelBoundaries)for(var wi=0;wi<config.widePanelBoundaries.length;wi++)for(var pi=0;pi<one(d,'body').paragraphs.length;pi++){var p=one(d,'body').paragraphs[pi];if(meaningful(p.contents)===meaningful(config.widePanelBoundaries[wi].paragraphText)&&config.widePanelBoundaries[wi].keepAllLinesTogether===true){p.keepLinesTogether=true;p.keepAllLinesTogether=true;}}
 
-        normalizeStructuralSpacing(d);formulaPadding(d,true);separateCaptionSpacing(d,true);finishTypography(d);applySourceTableFormatting(d,config);sourceTextFormatting(d,config,true);sourceFormulaNumbering(d,config,true);protectLineTokens(d);formulaLineSpacing(d,true);bodyIndentation(d,true);inlineCaptionSpacing(d,true);
+        normalizeStructuralSpacing(d);formulaPadding(d,true);separateCaptionSpacing(d,true);finishTypography(d);applySourceTableFormatting(d,config);sourceTextFormatting(d,config,true);sourceFormulaNumbering(d,config,true);protectLineTokens(d);formulaLineSpacing(d,true);bodyIndentation(d,true,config);inlineCaptionSpacing(d,true);
 
     }
 
@@ -1391,7 +1408,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
         var formatErrors=sourceTextFormatting(d,c,false);for(var fe=0;fe<formatErrors.length;fe++)err('SOURCE_TEXT_FORMAT',formatErrors[fe]);
 
         var inlineGaps=inlineCaptionSpacing(d,false);for(var ig=0;ig<inlineGaps.length;ig++)err('INLINE_FIGURE_CAPTION_GAP',inlineGaps[ig]);
-        var indentErrors=bodyIndentation(d,false);for(var ie=0;ie<indentErrors.length;ie++)err('BODY_FIRST_LINE_INDENT',indentErrors[ie]);
+        var indentErrors=bodyIndentation(d,false,c);for(var ie=0;ie<indentErrors.length;ie++)err('BODY_FIRST_LINE_INDENT',indentErrors[ie]);
         var figures=0,conclusion=-1;
 
         for(var k=0;k<stories.length;k++)for(var i=0;i<stories[k].paragraphs.length;i++){
