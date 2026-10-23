@@ -107,7 +107,11 @@ var JournalLayout = (function () {
         validateTableKinds(tables,config);
         for(var i=0;i<tables.length;i++)if(tableKind(tables[i],config,i)==='ordinary'){
             var table=tables[i];
-            for(var j=0;j<table.rows.length;j++){table.rows[j].autoGrow=true;table.rows[j].minimumHeight=5;}
+            for(var j=0;j<table.rows.length;j++){
+                var row=table.rows[j],minimum=Number(row.minimumHeight);
+                row.autoGrow=true;
+                if(!isFinite(minimum)||minimum<4.6-.02||minimum>5.5+.02)row.minimumHeight=5;
+            }
             for(var c=0;c<table.cells.length;c++){
                 var cell=table.cells[c];cell.texts[0].justification=Justification.CENTER_ALIGN;
                 cell.properties={topInset:.5,bottomInset:.5,leftInset:.5,rightInset:.5,
@@ -885,7 +889,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
             try{
 
-                for(var i=0;i<rows.length;i++)rows[i].minimumHeight=Math.max(4.8,Math.min(5.5,saved[i]+(target-before)*factor/rows.length));
+                for(var i=0;i<rows.length;i++)rows[i].minimumHeight=Math.max(4.6,Math.min(5.5,saved[i]+(target-before)*factor/rows.length));
 
                 d.recompose();var after=measure(frame);
 
@@ -1070,7 +1074,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
                             for(var ti=0;ti<tables.length;ti++)for(var ri=tables[ti].headerRowCount;ri<tables[ti].rows.length;ri++){
 
-                                var row=tables[ti].rows[ri],single=true;if(row.height<4.8||row.height>5.5)continue;
+                                var row=tables[ti].rows[ri],single=true;if(row.height<4.6||row.height>5.5)continue;
 
                                 for(var rci=0;rci<row.cells.length;rci++){
 
@@ -1170,7 +1174,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
             }
 
-            if(!isLast&&target-last(f)>.01){var tables=f.tables.everyItem().getElements(),rows=[];for(var ti=0;ti<tables.length;ti++)for(var ri=0;ri<tables[ti].rows.length;ri++){var row=tables[ti].rows[ri];if(row.height<=5.5+.001&&row.height>=4.8-.001&&row.minimumHeight<5.5-.001)rows.push(row);}if(rows.length)tableHeightStep(d,f,rows,target);}
+            if(!isLast&&target-last(f)>.01){var tables=f.tables.everyItem().getElements(),rows=[];for(var ti=0;ti<tables.length;ti++)for(var ri=0;ri<tables[ti].rows.length;ri++){var row=tables[ti].rows[ri];if(row.height<=5.5+.001&&row.height>=4.6-.001&&row.minimumHeight<5.5-.001)rows.push(row);}if(rows.length)tableHeightStep(d,f,rows,target);}
 
         }
 

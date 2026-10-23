@@ -37,6 +37,12 @@ for(const edge of ['top','bottom','left','right']){
 }
 assert.equal(cell.properties.verticalJustification,'middle');
 assert.deepEqual(Array.from(rules.tableNativeIssues(ordinary)),[]);
+for(const approved of [4.6,4.8,5.5]){
+  row.minimumHeight=approved;
+  rules.normalizeOrdinaryTables([ordinary,algorithm],{tableKinds:kinds.slice(0,2)});
+  assert.equal(row.minimumHeight,approved,'format restore preserves an approved bottom-plan minimum');
+}
+row.minimumHeight=5;
 ordinary.columns[0].width=0;
 assert(Array.from(rules.tableNativeIssues(ordinary)).some(issue=>issue.code==='TABLE_WIDTH_INVALID'));
 ordinary.columns[0].width=85.5;

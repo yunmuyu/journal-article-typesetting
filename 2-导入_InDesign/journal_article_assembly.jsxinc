@@ -45,6 +45,35 @@ var JournalArticleAssembly = (function () {
         }
         return {blocks:result,captions:captions};
     }
+    function sameTableEvidence(a,b){
+        if(a===b)return true;
+        if(!a||!b||typeof a!=='object'||typeof b!=='object')return false;
+        var key,count=0;for(key in a)if(a.hasOwnProperty(key)){count++;if(!b.hasOwnProperty(key)||!sameTableEvidence(a[key],b[key]))return false;}
+        for(key in b)if(b.hasOwnProperty(key))count--;
+        return count===0;
+    }
+    function validateTableAssembly(job,data,supp,structures,audit){
+        var specs=job.tables||[],kinds=audit&&audit.tableKinds||[],gaps={},seen={},i,s,n,key;
+        if(!supp||!supp.tables||!structures||!structures.tables||specs.length!==supp.tables.length||specs.length!==structures.tables.length||specs.length!==kinds.length)fail('TABLE_CONFIG_COUNT');
+        for(i=0;i<data.blocks.length;i++)if(data.blocks[i].role==='table_gap'){
+            n=Number(data.blocks[i].tableNumber);if(!isFinite(n)||n<1||n!==Math.floor(n)||gaps[i])fail('TABLE_SOURCE',i);gaps[i]=n;
+        }
+        var gapCount=0;for(key in gaps)if(gaps.hasOwnProperty(key))gapCount++;
+        if(gapCount!==specs.length)fail('TABLE_CONFIG_COUNT');
+        for(i=0;i<specs.length;i++){
+            s=specs[i];n=Number(s.number);
+            if(!isFinite(n)||n<1||n!==Math.floor(n)||seen[n]||s.sourceIndex!==i||
+                !isFinite(s.blockIndex)||s.blockIndex!==Math.floor(s.blockIndex)||gaps[s.blockIndex]!==n||
+                !supp.tables[i]||!supp.tables[i].rows||!structures.tables[i]||!structures.tables[i].rows||
+                !kinds[i]||Number(kinds[i].number)!==n||kinds[i].kind!==s.kind||
+                String(kinds[i].reviewEvidence)!==String(s.reviewEvidence)||
+                !sameTableEvidence(kinds[i].sourceEvidence,s.sourceEvidence)||
+                !sameTableEvidence(s.sourceEvidence,structures.tables[i].sourceFormatting||{}))fail('TABLE_CONFIG_MISMATCH',i);
+            seen[n]=true;
+            if(s.kind!=='ordinary')fail('TABLE_KIND_UNSUPPORTED',s.kind||'unclassified');
+        }
+        if(job.expected&&job.expected.tables!==undefined&&job.expected.tables!==specs.length)fail('TABLE_CONFIG_COUNT');
+    }
     function clearPayload(p) {
         // Replacing the whole paragraph (including its return) transfers its style to the next paragraph.
         if(p.characters.length>1)p.characters.itemByRange(0,p.characters.length-2).remove();
@@ -195,7 +224,7 @@ var JournalArticleAssembly = (function () {
     }
     function improveTableWidths(initial,minimums,measure){
         var best=initial.slice(0),score=measure(best),deltas=[.5,1,2,4,8,16,32],evaluations=1;
-        if(!isFinite(score))fail('TABLE_WIDTH_MEASUREMENT');
+        if(isNaN(score))fail('TABLE_WIDTH_MEASUREMENT');
         for(var pass=0;pass<3&&evaluations<300;pass++){
             var improved=false;
             for(var left=0;left<best.length&&evaluations<300;left++)for(var right=left+1;right<best.length&&evaluations<300;right++){
@@ -205,12 +234,14 @@ var JournalArticleAssembly = (function () {
                     candidate[left]+=delta;candidate[right]-=delta;
                     if(candidate[left]<minimums[left]-.0001||candidate[right]<minimums[right]-.0001)continue;
                     var measured=measure(candidate);evaluations++;
+                    if(isNaN(measured))fail('TABLE_WIDTH_MEASUREMENT');
                     if(isFinite(measured)&&measured<pairScore-.01){pairBest=candidate;pairScore=measured;}
                 }
                 if(pairScore<score-.01){best=pairBest;score=pairScore;improved=true;}
             }
             if(!improved)break;
         }
+        if(!isFinite(score))fail('TABLE_WIDTH_NO_FEASIBLE');
         return best;
     }
     function tableWidthMinimums(rows,structure){
@@ -657,8 +688,9 @@ var JournalArticleAssembly = (function () {
     }
     function run(appInstance,job) {
         if(job.paragraphAdjustments&&job.paragraphAdjustments.length)fail("AUTHOR_REPAIR_FORBIDDEN");
-        var data=parse(job.logicalArticlePath),supp=parse(job.supplementPath),structures=parse(job.tableStructurePath),prepared=prepareBlocks(data,job.panels);
+        var data=parse(job.logicalArticlePath),supp=parse(job.supplementPath),structures=parse(job.tableStructurePath),prepared=prepareBlocks(data,job.panels),tableAudit=parse(job.auditConfigPath);
         validateFormulaMarkers(prepared.blocks);
+        validateTableAssembly(job,data,supp,structures,tableAudit);
         var state=JournalDocumentSession.acquire(appInstance,job.outputPath),d=state.document;
         if(!state.openedHere)fail("ASSEMBLY_TARGET_ALREADY_OPEN");
         var oldRedraw=appInstance.scriptPreferences.enableRedraw,oldUI=appInstance.scriptPreferences.userInteractionLevel,oldPreflight=d.preflightOptions.preflightOff;
@@ -753,9 +785,12 @@ var JournalArticleAssembly = (function () {
             return result;
         }catch(error){
             result.status="failed";result.failure=String(error);result.line=error.line;
-            d.preflightOptions.preflightOff=oldPreflight;JournalDocumentSession.save(d,state);return result;
+            d.preflightOptions.preflightOff=oldPreflight;
+            try{JournalDocumentSession.close(d,state,SaveOptions.NO,true);}catch(discardError){result.discardFailure=String(discardError);}
+            return result;
         }finally{
-            d.preflightOptions.preflightOff=oldPreflight;appInstance.scriptPreferences.enableRedraw=oldRedraw;appInstance.scriptPreferences.userInteractionLevel=oldUI;
+            if(!state.closed&&d.isValid!==false)d.preflightOptions.preflightOff=oldPreflight;
+            appInstance.scriptPreferences.enableRedraw=oldRedraw;appInstance.scriptPreferences.userInteractionLevel=oldUI;
         }
     }
     return {table:table,optimizeNativeTable:optimizeNativeTable,improveTableWidths:improveTableWidths,sourceInlineFormulaParagraph:sourceInlineFormulaParagraph,replaceNativeFormula:replaceNativeFormula,trimTrailingBlankPages:trimTrailingBlankPages,panelRows:panelRows,refreshPanels:refreshPanels,growBodyPages:growBodyPages,defaultTableWidths:defaultTableWidths,lastVisibleIndex:lastVisibleIndex,standaloneFormulaNumber:standaloneFormulaNumber,sideBySideFormulaNumbers:sideBySideFormulaNumbers,displayFormulaRow:displayFormulaRow,formulaMarkers:formulaMarkers,validateFormulaMarkers:validateFormulaMarkers,idmsEntry:idmsEntry,insertNativeFormula:insertNativeFormula,inlineFormulas:inlineFormulas,printedFormulaNumber:printedFormulaNumber,orderPanelFrames:orderPanelFrames,prepareBlocks:prepareBlocks,codeLine:codeLine,clearPayload:clearPayload,setTableBreak:setTableBreak,setFormulaTabs:setFormulaTabs,restoreMasterText:restoreMasterText,normalizeExisting:normalizeExisting,reflowExisting:reflowExisting,layoutExisting:layoutExisting,applyBottomExisting:applyBottomExisting,run:run};

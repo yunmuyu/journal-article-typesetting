@@ -16,10 +16,10 @@ function capacity(gs){
 function tableRows(frame,measurement){
  const result=[];
  for(const table of measurement.tables||[])for(const row of table.rows){
-  if(row.index<table.headerRowCount||row.height>5.5001||row.height<4.7999)continue;
+  if(row.index<table.headerRowCount||row.height>5.5001||row.height<4.5999)continue;
   const cells=table.cells.filter(c=>c.rowIndex===row.index&&c.rowSpan===1);
   if(!cells.length||cells.some(c=>c.lines.length!==1||c.lines[0].frameId!==frame.id))continue;
-  result.push({id:`${table.id}:${row.index}`,singleLine:true,currentHeightMm:row.height,minHeightMm:4.8,maxHeightMm:5.5,
+  result.push({id:`${table.id}:${row.index}`,singleLine:true,currentHeightMm:row.height,minHeightMm:4.6,maxHeightMm:5.5,
    target:{tableLabel:table.label,rowIndex:row.index}});
  }
  return result;

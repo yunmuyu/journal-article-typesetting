@@ -18,6 +18,11 @@ assert.ok(optimized[0]>=57,'measured total row height, not source ratio, chooses
 assert.equal(optimized.reduce((sum,width)=>sum+width),85.5);
 assert.ok(optimized[1]>=2);
 assert.ok(measured.length>1,'candidate widths are evaluated');
+const recovered=Array.from(improve(sourceWidths,[7.4,2],widths=>widths[0]>=50?15:Infinity));
+assert.ok(recovered[0]>=50,'an overflowing starting width must search for a feasible candidate');
+let noFeasibleCalls=0;
+assert.throws(()=>improve(sourceWidths,[7.4,2],()=>{noFeasibleCalls++;return Infinity;}),/TABLE_WIDTH_NO_FEASIBLE/);
+assert.ok(noFeasibleCalls<=300,'a table with no feasible column widths terminates');
 const unchanged=Array.from(improve(sourceWidths,[7.4,2],()=>15));
 assert.deepEqual(unchanged,sourceWidths,'equal row height does not make an arbitrary width change');
 let boundedCalls=0;
@@ -42,4 +47,16 @@ nativeContext.JournalArticleAssembly.optimizeNativeTable(nativeDocument,measured
   {widths:[1000,1000],rows:[[{start:0,span:1},{start:1,span:1}]]});
 assert.equal(measuredTable.columns[0].width>=57,true,'native row heights choose the final widths');
 assert.equal(measuredTable['journal-table-kind'],'ordinary');
+const overflowCells=[{overflows:false}];
+const overflowTable={columns:[{width:42.75},{width:42.75}],rows:[{height:10}],cells:overflowCells};
+const overflowDoc={recompose(){overflowCells[0].overflows=overflowTable.columns[0].width<50;}};
+nativeContext.JournalArticleAssembly.optimizeNativeTable(overflowDoc,overflowTable,[['a','b']],
+  {widths:[1,1],rows:[[{start:0,span:1},{start:1,span:1}]]});
+assert.ok(overflowTable.columns[0].width>=50,'native overflow at source ratio recovers with a feasible width');
+overflowTable.columns[0].width=42.75;overflowTable.columns[1].width=42.75;
+overflowDoc.recompose=()=>{overflowCells[0].overflows=true;};
+assert.throws(()=>nativeContext.JournalArticleAssembly.optimizeNativeTable(overflowDoc,overflowTable,[['a','b']],
+  {widths:[1,1],rows:[[{start:0,span:1},{start:1,span:1}]]}),/TABLE_WIDTH_NO_FEASIBLE/);
+assert.deepEqual(overflowTable.columns.map(c=>c.width),[42.75,42.75],
+  'no-feasible-width failure rolls all native columns back');
 console.log('PASS two-CJK table cells receive a usable minimum column width while total table width stays fixed');
