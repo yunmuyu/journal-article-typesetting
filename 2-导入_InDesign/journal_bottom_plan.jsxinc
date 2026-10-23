@@ -20,7 +20,7 @@ var JournalBottomPlan=(function(){
             from=number(action.fromScalePct,'BOTTOM_FIGURE_SCALE');to=number(action.toScalePct,'BOTTOM_FIGURE_SCALE');if(from<=0||to<=0||Math.abs(to-from)>5.000001)fail('BOTTOM_FIGURE_RANGE',action.id);var item=pageItemByLabel(document,action.target&&action.target.label);if(typeof item.resize!=='function')fail('BOTTOM_TARGET_ITEM',action.id);return {kind:action.kind,item:item,ratio:to/from};
         }
         if(action.kind==='table-row-height'){
-            value=number(action.toMm,'BOTTOM_TABLE_VALUE');if(value<4.8||value>5.5)fail('BOTTOM_TABLE_RANGE',action.id);table=tableByLabel(document,action.target&&action.target.tableLabel);rowIndex=number(action.target&&action.target.rowIndex,'BOTTOM_TARGET_ROW');if(rowIndex<0||rowIndex!==Math.floor(rowIndex)||rowIndex>=table.rows.length)fail('BOTTOM_TARGET_ROW',action.id);return {kind:action.kind,row:table.rows[rowIndex],value:value};
+            value=number(action.toMm,'BOTTOM_TABLE_VALUE');if(value<4.6||value>5.5)fail('BOTTOM_TABLE_RANGE',action.id);table=tableByLabel(document,action.target&&action.target.tableLabel);rowIndex=number(action.target&&action.target.rowIndex,'BOTTOM_TARGET_ROW');if(rowIndex<0||rowIndex!==Math.floor(rowIndex)||rowIndex>=table.rows.length)fail('BOTTOM_TARGET_ROW',action.id);return {kind:action.kind,row:table.rows[rowIndex],value:value};
         }
         fail('BOTTOM_PLAN_ADJUSTMENT',action.kind);
     }

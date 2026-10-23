@@ -218,7 +218,7 @@ def vertical_merges(tables, structures):
 
 def build(extracted, figure_directory, author, template, destination, output_document,
           reference=None, contracts=None, pages=None, inventory=None, page_number_start=2,
-          native_manifest=None, table_headers=None, original_doc=None, figure_groups=None, fit_near_column=False):
+          native_manifest=None, table_headers=None, table_kinds=None, original_doc=None, figure_groups=None, fit_near_column=False):
     extracted, figure_directory = Path(extracted).resolve(), Path(figure_directory).resolve()
     template, destination, output_document = Path(template).resolve(), Path(destination).resolve(), Path(output_document).resolve()
     require(template.is_file(), 'TEMPLATE_MISSING')
@@ -332,6 +332,10 @@ def build(extracted, figure_directory, author, template, destination, output_doc
                     digest(path) == entry['sha256'].lower() and entry['basePointSize'] == 10.5,
                     'NATIVE_IDMS_PROVENANCE')
     headers = read(table_headers) if table_headers else {}
+    reviewed_kinds = read(table_kinds) if table_kinds else {}
+    require(isinstance(reviewed_kinds, dict), 'TABLE_KINDS_FORMAT')
+    require(all(str(i) in {str(n) for n in range(1, report['tableCount'] + 1)}
+                for i in reviewed_kinds), 'TABLE_KINDS_INDEX')
     require(len(supp['tables']) == len(structures['tables']) == report['tableCount'], 'TABLE_SOURCE_COUNT')
     tables = []
     for i, structure in enumerate(structures['tables']):
@@ -342,7 +346,15 @@ def build(extracted, figure_directory, author, template, destination, output_doc
         candidates = [n for n, b in enumerate(blocks) if b['role'] == 'table_gap' and
                       b.get('tableNumber') == i + 1]
         require(len(candidates) == 1, f'TABLE_BLOCK_AMBIGUOUS {i + 1}')
-        tables.append({'number': i + 1, 'sourceIndex': i, 'blockIndex': candidates[0]})
+        review = reviewed_kinds.get(str(i + 1))
+        if review is not None:
+            require(isinstance(review, dict) and review.get('kind') in ('ordinary', 'three-line', 'algorithm')
+                    and isinstance(review.get('reviewEvidence'), str) and review['reviewEvidence'].strip(),
+                    f'TABLE_KIND_REVIEW_REQUIRED {i + 1}')
+        kind = review['kind'] if review else 'unclassified'
+        tables.append({'number': i + 1, 'sourceIndex': i, 'blockIndex': candidates[0],
+                       'kind': kind, 'reviewEvidence': review['reviewEvidence'] if review else None,
+                       'sourceEvidence': structure.get('sourceFormatting', {})})
     source_records = check_paragraphs(supp, indices, logical)
     destination.mkdir(parents=True, exist_ok=True)
     output_document.parent.mkdir(parents=True, exist_ok=True)
@@ -367,7 +379,9 @@ def build(extracted, figure_directory, author, template, destination, output_doc
              'figureCount': len(captions), 'graphicCount': len(captions), 'tableCount': len(tables),
              'pageBudget': pages, 'startOnLeft': page_number_start % 2 == 0,
              'assets': assets, 'requireOriginalFigureLinks': True, 'requireNativeFormulaPaste': True,
-             'tableHeaderRows': [s['headerRows'] for s in structures['tables']], 'mergedEmptyCells': vertical_merges(supp['tables'], structures['tables']),
+             'tableHeaderRows': [s['headerRows'] for s in structures['tables']],
+             'tableKinds': [{key: t[key] for key in ('number', 'kind', 'reviewEvidence', 'sourceEvidence')} for t in tables],
+             'mergedEmptyCells': vertical_merges(supp['tables'], structures['tables']),
              'fixedFrames': [dict(front_contract['frontAnchor'], role='front'), dict(front_contract['footerAnchor'], role='footer')],
              'templateAnchors': [], 'figurePanels': [], 'localBottomPairs': [], 'widePanelFrameBreaks': [],
              'reviewedContinuedTables': [], 'tableTextRuns': table_text_runs(supp['tables']),
@@ -416,6 +430,8 @@ def build(extracted, figure_directory, author, template, destination, output_doc
         inputs.append(('source-original-doc', original_doc))
     inputs += [(p.name, p) for p in module_dir.glob('*.jsx*')]
     inputs += [('figure-' + str(a['number']), Path(a['path'])) for a in assets]
+    if table_kinds:
+        inputs.append(('table-kinds-reviewed', Path(table_kinds)))
     if group_provenance:
         job['figureGroupProvenance'] = copy.deepcopy(group_provenance)
         inputs.append(('figure-groups', Path(group_provenance['path'])))
@@ -437,7 +453,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('extracted', 'figure-directory', 'author', 'template', 'destination', 'output-document'):
         parser.add_argument('--' + name, required=True)
-    for name in ('reference', 'contracts', 'inventory', 'native-manifest', 'table-headers', 'original-doc', 'figure-groups'):
+    for name in ('reference', 'contracts', 'inventory', 'native-manifest', 'table-headers', 'table-kinds', 'original-doc', 'figure-groups'):
         parser.add_argument('--' + name)
     parser.add_argument('--pages', type=int)
     parser.add_argument('--page-number-start', type=int, default=2)
