@@ -76,7 +76,7 @@ check(JournalLayout.bodyIndentation(d,false).length===0,'reflow changed native b
 check(JournalLayout.inlineCaptionSpacing(d,false).length===0,'reflow changed native fixed caption gap');
 r.indentPt=pt(s.paragraphs[1].firstLineIndent);r.captionGapPt=pt(s.paragraphs[3].leading);r.compressedLeadingPt=pt(s.paragraphs[1].leading);
 check(Math.abs(r.compressedLeadingPt-14.8)<.01,'body compression must be an actual 14.8pt');r.passed=true;
-}catch(e){r.error=String(e);r.line=e.line;}finally{try{if(d)d.close(SaveOptions.NO);}catch(closeError){r.closeError=String(closeError);r.passed=false;}var f=File($reportJson);f.encoding='UTF-8';f.open('w');f.write(JournalRegressionSnapshot.json(r));f.close();app.scriptPreferences.measurementUnit=oldUnit;app.scriptPreferences.userInteractionLevel=oldUI;}
+}catch(e){r.error=String(e);r.line=e.line;}finally{try{if(d)d.close(SaveOptions.NO);}catch(closeError){r.closeError=String(closeError);r.passed=false;}try{app.scriptPreferences.measurementUnit=oldUnit;app.scriptPreferences.userInteractionLevel=oldUI;}catch(restoreError){r.restoreError=String(restoreError);r.passed=false;}var f=File($reportJson);f.encoding='UTF-8';f.open('w');f.write(JournalRegressionSnapshot.json(r));f.close();}
 return r.run_id;}());
 "@
 $hash=[Security.Cryptography.SHA256]::Create();$sourceSha=[BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($prefix+"`n"+$code))).Replace('-','').ToLowerInvariant()

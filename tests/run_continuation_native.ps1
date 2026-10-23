@@ -45,7 +45,7 @@ check(!d.pageItems.itemByID(markerId).isValid,'obsolete marker must be removed')
 check(Math.abs(Number(next.geometricBounds[0])-20)<.001,'second frame top must be restored');
 check(JournalLayout.continuedTableIssues(d).length===0,'final continuation gate must pass');
 r.passed=true;r.removed=result.removedMarkers;r.restored=result.restoredFrames;
-}catch(e){r.error=String(e);r.line=e.line;}finally{try{if(d)d.close(SaveOptions.NO);}catch(closeError){r.closeError=String(closeError);r.passed=false;}var f=File($reportJson);f.encoding='UTF-8';f.open('w');f.write(JournalRegressionSnapshot.json(r));f.close();app.scriptPreferences.measurementUnit=oldUnit;app.scriptPreferences.userInteractionLevel=oldUI;}
+}catch(e){r.error=String(e);r.line=e.line;}finally{try{if(d)d.close(SaveOptions.NO);}catch(closeError){r.closeError=String(closeError);r.passed=false;}try{app.scriptPreferences.measurementUnit=oldUnit;app.scriptPreferences.userInteractionLevel=oldUI;}catch(restoreError){r.restoreError=String(restoreError);r.passed=false;}var f=File($reportJson);f.encoding='UTF-8';f.open('w');f.write(JournalRegressionSnapshot.json(r));f.close();}
 return r.run_id;}());
 "@
 $hash=[Security.Cryptography.SHA256]::Create();$sourceSha=[BitConverter]::ToString($hash.ComputeHash([Text.Encoding]::UTF8.GetBytes($prefix+"`n"+$code))).Replace('-','').ToLowerInvariant()
