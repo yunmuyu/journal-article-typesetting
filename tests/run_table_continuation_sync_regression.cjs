@@ -1,0 +1,44 @@
+const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const context=vm.createContext({});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_layout_rules.jsxinc'),'utf8'),context);
+const rules=context.JournalLayout;
+let items=[],serial=100,split='b',failOnce=false,cycle=false;
+const page={id:1},body={overflows:false,extractLabel:()=> 'body'};
+function frame(id){let bounds=[26,17.5,110,103];const labels={};return {id,parentPage:page,parentStory:body,textFramePreferences:{textColumnCount:1},get geometricBounds(){return bounds.slice()},set geometricBounds(v){bounds=Array.from(v)},extractLabel:k=>labels[k]||'',insertLabel(k,v){labels[k]=v}};}
+const a=frame(1),b=frame(2),c=frame(3);
+function marker(label,bounds=[26,17.5,29.2,103]){
+ const labels={};const item={id:serial++,label,contents:'（续表）',paragraphs:[{pointSize:9,leading:12}],parentPage:page,overflows:false,nonprinting:false,isValid:true,geometricBounds:bounds.slice(),parentStory:{insertLabel(k,v){labels[k]=v}},duplicate(target){const copy=marker(this.label,this.geometricBounds);copy.parentPage=target;copy.nonprinting=this.nonprinting;items.push(copy);return copy;},move(target){this.parentPage=target},remove(){this.isValid=false;items=items.filter(x=>x!==this)}};return item;
+}
+const template=marker('template'),library={textFrames:[template]};
+const cell=frames=>({texts:[{lines:frames.map(f=>({insertionPoints:[{parentTextFrames:[f]}]}))}]});
+const table={label:'source-table-1',get rows(){let end=split==='b'?b:split==='c'?c:a;if(cycle)end=b.geometricBounds[0]>26?a:b;return [{cells:[cell([a])]},{cells:[cell([end])]}]}};
+body.tables=[table];const d={stories:[body],textFrames:[a,b,c],get allPageItems(){return items.slice()},recompose(){if(failOnce){failOnce=false;throw Error('TEST_RECOMPOSE_FAILURE')}}};
+let result=rules.syncContinuedTables(d,library);
+assert.equal(result.markers,1);assert.equal(items.length,1);assert.equal(b.geometricBounds[0],30.2);
+assert.equal(rules.continuedTableFragments(d).length,1,'a single cell spanning two frames is detected');
+assert.equal(rules.continuedTableIssues(d).length,0);
+const id=items[0].id;result=rules.syncContinuedTables(d,library);
+assert.equal(items.length,1);assert.equal(items[0].id,id,'repeat execution preserves the existing marker');assert.equal(b.geometricBounds[0],30.2);
+items[0].nonprinting=true;
+assert(rules.continuedTableIssues(d).some(s=>s.includes('format-or-position')),'hidden valid continuation must fail Check');
+rules.syncContinuedTables(d,library);
+assert.equal(items[0].nonprinting,false,'a real continuation is printable again after sync');
+split='c';result=rules.syncContinuedTables(d,library);
+assert.equal(result.removedMarkers,1);assert.equal(result.restoredFrames,1);assert.equal(b.geometricBounds[0],26);assert.equal(c.geometricBounds[0],30.2);assert.equal(items[0].label,'journal-continued-source-table-1-3');
+split='a';result=rules.syncContinuedTables(d,library);
+assert.equal(items.length,0);assert.equal(c.geometricBounds[0],26);assert.equal(c.extractLabel('journal-continuation-base-top'),'');
+c.insertLabel('journal-continuation-base-top','26');assert(rules.continuedTableIssues(d).some(s=>s.includes('stale-reserve')));c.insertLabel('journal-continuation-base-top','');
+split='b';rules.syncContinuedTables(d,library);const before=items[0].geometricBounds.slice();
+split='c';failOnce=true;
+assert.throws(()=>rules.syncContinuedTables(d,library),/TEST_RECOMPOSE_FAILURE/);
+assert.equal(b.geometricBounds[0],30.2);assert.equal(c.geometricBounds[0],26);assert.equal(items.length,1);assert.equal(items[0].label,'journal-continued-source-table-1-2');assert.deepEqual(items[0].geometricBounds,before);assert.equal(items[0].nonprinting,false);
+split='a';rules.syncContinuedTables(d,library);cycle=true;
+assert.throws(()=>rules.syncContinuedTables(d,library),/CONTINUATION_LAYOUT_UNSTABLE/);assert.equal(items.length,0);assert.equal(b.geometricBounds[0],26);cycle=false;
+items.push(marker('journal-continued-source-table-1-3'));
+assert(rules.continuedTableIssues(d).some(s=>s.includes('stale-marker')));
+items.push(marker('journal-continued-source-table-99-88'),marker('journal-continued-source-table-1-99'));rules.syncContinuedTables(d,library);
+assert.equal(items.length,2);assert(items.some(x=>x.label==='journal-continued-source-table-99-88'),'another table is not cleaned');
+assert(items.some(x=>x.label==='journal-continued-source-table-1-99'),'a same-number table with a foreign frame is not cleaned');
+a.textFramePreferences.textColumnCount=2;
+assert.throws(()=>rules.continuedTableFragments(d),/CONTINUATION_MULTICOLUMN_UNSUPPORTED/);
+console.log('PASS sync behavior: repeat, migration, obsolete cleanup, space restoration, single-cell split, rollback, oscillation and scope protection');
