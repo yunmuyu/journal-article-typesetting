@@ -25,13 +25,21 @@ article. Existing algorithm or three-line tables retain their native cell
 format during ordinary-table normalization. A Check with an unclassified table
 reports `TABLE_KIND_REQUIRED` instead of assuming an ordinary data table.
 
-For ordinary tables, `JournalLayout` now shares the same format restoration
-between creation, Apply and existing-article update stages: horizontal and
-vertical centering, four 0.5 mm insets, four 0.5 pt strokes, auto growth, and
-5 mm minimum row height. It does not assign actual row height. Audit reads the
-resolved native properties separately and checks a 4.6–5.5 mm minimum-height
-range and actual single-line height range. Multi-line actual height may grow.
-A missing or mixed native value fails measurement; it is not converted to zero.
+For ordinary tables, `JournalLayout` restores four 0.5 mm insets, four 0.5 pt
+strokes, vertical centering and auto growth. It preserves a valid 4.6–5.5 mm
+minimum row height and repairs only missing or out-of-range values to 5 mm;
+actual multiline height grows naturally. Horizontal centering is the default
+for unprotected cells. Existing right alignment and tabbed cells are preserved,
+and numeric decimal columns are not recentered.
+
+The native audit measures decimal-point X coordinates within 0.1 mm in each
+numeric decimal column. A right-aligned paragraph or tab alone is not proof
+of alignment; unavailable geometry fails measurement. New assembly blocks a
+variable-shape decimal column before document acquisition with
+`TABLE_DECIMAL_ALIGNMENT_REVIEW_REQUIRED`, because the importer has no verified
+native alignment plan for it. Numeric-shape detection reuses the read-only
+logic of the user's checker; its UI, selection changes and toggle formatting
+are excluded.
 
 The snapshot stores actual row height, minimum height, auto growth, and table
 kind. Comparison checks cell native format and row constraints. It accepts
@@ -42,9 +50,9 @@ candidate search uses the recomposed sum of actual row heights as its score.
 The extracted Word proportions seed the search but are not the objective.
 Search is bounded to 300 measurements and is not a proof of global optimum.
 
-Static validation on the branch: 73 CJS entry points / 127 results passed after
-excluding the two known main failures fixed separately in PR #2; three other
-JavaScript entry points passed; Python unittest discovery passed 47 tests.
+Static validation on the branch: 74 CJS and three other JavaScript entry
+points passed after excluding the two known main failures fixed separately
+in PR #2; Python unittest discovery passed 47 tests.
 Those checks use synthetic samples. The historical IDML evidence for the three
 reported tables predates the user's changed 19th-issue PDF, so it does not
 identify current PDF attributes. No InDesign or Illustrator process was run.

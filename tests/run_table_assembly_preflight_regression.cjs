@@ -18,9 +18,11 @@ function fixture(kind='ordinary'){
     JournalDocumentSession:{acquire(){calls.push(['acquire']);return {document,openedHere:true};},
       save(){calls.push(['save']);},close(d,state,option){calls.push(['session.close',option]);d.close(option);state.closed=true;}},
     SaveOptions:{NO:'discard'},UserInteractionLevels:{NEVER_INTERACT:0},
+    Justification:{CENTER_ALIGN:'center',RIGHT_ALIGN:'right'},VerticalJustification:{CENTER_ALIGN:'middle'},
     RulerOrigin:{PAGE_ORIGIN:0},MeasurementUnits:{MILLIMETERS:0}
   });
   vm.runInContext(source,context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_layout_rules.jsxinc'),'utf8'),context);
   return {files,job,calls,context,app:{scriptPreferences:{enableRedraw:true,userInteractionLevel:1}}};
 }
 for(const kind of ['unclassified','algorithm','three-line']){
@@ -35,6 +37,11 @@ for(const breakConfig of [f=>{f.files.audit.tableKinds[0].kind='algorithm';},
   assert.throws(()=>f.context.JournalArticleAssembly.run(f.app,f.job),/TABLE_CONFIG_/);
   assert.deepEqual(f.calls,[],'inconsistent table configuration cannot acquire a document');
 }
+const decimal=fixture();
+decimal.files.supplement.tables[0].rows=[['1.2'],['12.3']];
+decimal.files.structure.tables[0].rows=[[{start:0,span:1}],[{start:0,span:1}]];
+assert.throws(()=>decimal.context.JournalArticleAssembly.run(decimal.app,decimal.job),/TABLE_DECIMAL_ALIGNMENT_REVIEW_REQUIRED/);
+assert.deepEqual(decimal.calls,[],'variable-shape decimal columns block before opening the document');
 const failed=fixture();failed.job.templateContractVersion='template-v1';
 const result=failed.context.JournalArticleAssembly.run(failed.app,failed.job);
 assert.equal(result.status,'failed');

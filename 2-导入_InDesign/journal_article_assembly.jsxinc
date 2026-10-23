@@ -71,6 +71,8 @@ var JournalArticleAssembly = (function () {
                 !sameTableEvidence(s.sourceEvidence,structures.tables[i].sourceFormatting||{}))fail('TABLE_CONFIG_MISMATCH',i);
             seen[n]=true;
             if(s.kind!=='ordinary')fail('TABLE_KIND_UNSUPPORTED',s.kind||'unclassified');
+            var decimalColumns=JournalLayout.sourceDecimalColumns(supp.tables[i].rows,structures.tables[i]);
+            if(decimalColumns.length)fail('TABLE_DECIMAL_ALIGNMENT_REVIEW_REQUIRED',n+'/'+decimalColumns.join(','));
         }
         if(job.expected&&job.expected.tables!==undefined&&job.expected.tables!==specs.length)fail('TABLE_CONFIG_COUNT');
     }
