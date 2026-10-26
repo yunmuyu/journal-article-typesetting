@@ -119,94 +119,117 @@ var JournalLayout = (function () {
         return tables;
     }
 
-    function continuedTableFragments(d){
-
-        var tables=articleTables(d),out=[];
-
-        for(var ti=0;ti<tables.length;ti++){
-
-            var table=tables[ti],seen={},first=null;
-
-            for(var ri=0;ri<table.rows.length;ri++)for(var ci=0;ci<table.rows[ri].cells.length;ci++){
-
-                var lines=table.rows[ri].cells[ci].texts[0].lines;if(!lines.length)continue;
-
-                var owners=lines[0].insertionPoints[0].parentTextFrames;if(!owners.length)continue;
-
-                var frame=owners[0];if(first===null)first=frame.id;
-
-                if(frame.id!==first&&!seen[frame.id])out.push({tableLabel:table.label,frame:frame,key:'journal-continued-'+table.label+'-'+frame.id});
-
-                seen[frame.id]=true;
-
-            }
-
+    function continuationFrames(d){
+        var result=[],stories=scope(d);
+        for(var i=0;i<stories.length;i++)if(stories[i].extractLabel('journal-role')==='body'||stories[i].extractLabel('journal-role')==='tables'){
+            var containers=stories[i].textContainers||[];for(var j=0;j<containers.length;j++)result.push(containers[j]);
         }
+        if(!result.length&&d.textFrames)for(i=0;i<d.textFrames.length;i++){
+            var frame=d.textFrames[i],frameRole=frame.parentStory.extractLabel('journal-role');
+            if(frameRole==='body'||frameRole==='tables')result.push(frame);
+        }
+        return result;
+    }
 
+    function continuedTableFragments(d){
+        var tables=articleTables(d),out=[];
+        for(var ti=0;ti<tables.length;ti++){
+            var table=tables[ti],seen={},first=null;
+            for(var ri=0;ri<table.rows.length;ri++)for(var ci=0;ci<table.rows[ri].cells.length;ci++){
+                var lines=table.rows[ri].cells[ci].texts[0].lines;
+                for(var li=0;li<lines.length;li++){
+                    var owners=lines[li].insertionPoints[0].parentTextFrames;if(!owners.length)continue;
+                    var frame=owners[0];
+                    if(frame.textFramePreferences&&Number(frame.textFramePreferences.textColumnCount)>1)throw Error('CONTINUATION_MULTICOLUMN_UNSUPPORTED '+table.label);
+                    if(first===null)first=frame.id;
+                    if(frame.id!==first&&!seen[frame.id])out.push({tableLabel:table.label,frame:frame,key:'journal-continued-'+table.label+'-'+frame.id});
+                    seen[frame.id]=true;
+                }
+            }
+        }
         return out;
-
     }
 
     function syncContinuedTables(d,library){
-
         var template=null;
-
         for(var ti=0;ti<library.textFrames.length;ti++){
-
             var candidate=library.textFrames[ti];
-
             if(/^[（(]续表[）)]$/.test(meaningful(candidate.contents))&&Number(candidate.paragraphs[0].pointSize)===9&&Number(candidate.paragraphs[0].leading)===12){template=candidate;break;}
-
         }
-
         if(!template)throw Error('CONTINUATION_TEMPLATE_REQUIRED');
-
-        var height=template.geometricBounds[2]-template.geometricBounds[0],fragments,changed=true,pass=0;
-
-        while(changed){
-
-            changed=false;fragments=continuedTableFragments(d);
-
-            if(pass++>d.textFrames.length)throw Error('CONTINUATION_LAYOUT_UNSTABLE');
-
-            for(var i=0;i<fragments.length;i++){
-
-                var frame=fragments[i].frame,bounds=frame.geometricBounds,base=frame.extractLabel('journal-continuation-base-top');
-
-                if(base===''){frame.insertLabel('journal-continuation-base-top',String(bounds[0]));base=String(bounds[0]);}
-
-                var top=Number(base)+height+1;
-
-                if(top>=bounds[2])throw Error('CONTINUATION_FRAME_CAPACITY');
-
-                if(Math.abs(bounds[0]-top)>.001){bounds[0]=top;frame.geometricBounds=bounds;changed=true;}
-
+        var height=template.geometricBounds[2]-template.geometricBounds[0],tables=articleTables(d),tableLabels={},frameIds={},frames=[],frameRecords=[],markers=[],created=[],fragments,pass=0,seenStates={},restored=0,removed=0;
+        var stories=scope(d),overflowBefore=[];
+        for(var si=0;si<stories.length;si++)overflowBefore.push(stories[si].overflows);
+        for(ti=0;ti<tables.length;ti++)tableLabels[tables[ti].label]=true;
+        var allFrames=continuationFrames(d);
+        for(var fi=0;fi<allFrames.length;fi++){
+            var frame=allFrames[fi];
+            frames.push(frame);frameIds[frame.id]=true;frameRecords.push({frame:frame,bounds:frame.geometricBounds.slice(0),base:frame.extractLabel('journal-continuation-base-top')});
+        }
+        // Backups preserve the exact old marker if a later recomposition fails.
+        var items=d.allPageItems;
+        try{
+        for(var mi=0;mi<items.length;mi++){
+            var match=String(items[mi].label).match(/^journal-continued-(source-table-[0-9]+)-([0-9]+)$/);
+            if(!match||!tableLabels[match[1]]||!frameIds[Number(match[2])])continue;
+            var oldMarker=items[mi],oldRole=oldMarker.parentStory.extractLabel('journal-role'),backup=oldMarker.duplicate(oldMarker.parentPage);
+            markers.push({item:oldMarker,backup:backup,label:oldMarker.label,nonprinting:oldMarker.nonprinting,role:oldRole});
+            backup.label='journal-continuation-rollback';backup.nonprinting=true;backup.parentStory.insertLabel('journal-role','');
+        }
+            while(true){
+                fragments=continuedTableFragments(d);var active={},changed=false,state=[];
+                for(var i=0;i<fragments.length;i++)active[fragments[i].frame.id]=true;
+                for(fi=0;fi<frames.length;fi++){
+                    frame=frames[fi];var bounds=frame.geometricBounds,base=frame.extractLabel('journal-continuation-base-top');
+                    if(active[frame.id]){
+                        if(base===''){base=String(bounds[0]);frame.insertLabel('journal-continuation-base-top',base);}
+                        var top=Number(base)+height+1;if(top>=bounds[2])throw Error('CONTINUATION_FRAME_CAPACITY');
+                        if(Math.abs(bounds[0]-top)>.001){bounds[0]=top;frame.geometricBounds=bounds;changed=true;}
+                    }else if(base!==''){
+                        bounds[0]=Number(base);frame.geometricBounds=bounds;frame.insertLabel('journal-continuation-base-top','');changed=true;restored++;
+                    }
+                    state.push(frame.id+':'+frame.geometricBounds[0]+':'+(active[frame.id]?1:0));
+                }
+                if(!changed)break;
+                var signature=state.join('|');if(seenStates[signature]||pass++>frames.length+1)throw Error('CONTINUATION_LAYOUT_UNSTABLE');
+                seenStates[signature]=true;d.recompose();
             }
-
-            if(changed)d.recompose();
-
+            var expected={};fragments=continuedTableFragments(d);
+            for(i=0;i<fragments.length;i++){
+                var spec=fragments[i],marker=null,count=0;expected[spec.key]=true;
+                for(mi=0;mi<markers.length;mi++)if(markers[mi].label===spec.key){marker=markers[mi].item;count++;}
+                if(count>1)throw Error('CONTINUATION_DUPLICATE '+spec.key);
+                if(!marker){marker=template.duplicate(spec.frame.parentPage);created.push(marker);}
+                marker.label=spec.key;marker.parentStory.insertLabel('journal-role','tableContinuation');
+                if(marker.itemLayer&&(!marker.itemLayer.visible||!marker.itemLayer.printable))throw Error('CONTINUATION_MARKER_LAYER '+spec.key);
+                marker.nonprinting=false;
+                if(marker.parentPage.id!==spec.frame.parentPage.id)marker.move(spec.frame.parentPage);
+                var fb=spec.frame.geometricBounds,baseTop=Number(spec.frame.extractLabel('journal-continuation-base-top'));
+                marker.geometricBounds=[baseTop,fb[1],baseTop+height,fb[3]];
+            }
+            d.recompose();
+            for(si=0;si<stories.length;si++)if(!overflowBefore[si]&&stories[si].overflows)throw Error('CONTINUATION_NEW_OVERSET');
+            for(mi=0;mi<markers.length;mi++)if(!expected[markers[mi].label]){markers[mi].item.remove();removed++;}
+            var issues=continuedTableIssues(d);if(issues.length)throw Error('CONTINUATION_INVALID '+issues.join(';'));
+        }catch(error){
+            for(i=0;i<created.length;i++)if(created[i].isValid)created[i].remove();
+            for(fi=0;fi<frameRecords.length;fi++){var saved=frameRecords[fi];saved.frame.geometricBounds=saved.bounds;saved.frame.insertLabel('journal-continuation-base-top',saved.base);}
+            for(mi=0;mi<markers.length;mi++){
+                var record=markers[mi];
+                if(record.item.isValid){
+                    if(record.item.parentPage.id!==record.backup.parentPage.id)record.item.move(record.backup.parentPage);
+                    record.item.geometricBounds=record.backup.geometricBounds;
+                    record.item.label=record.label;record.item.nonprinting=record.nonprinting;
+                    record.item.parentStory.insertLabel('journal-role',record.role);
+                    record.backup.remove();
+                }else{
+                    record.backup.label=record.label;record.backup.nonprinting=record.nonprinting;record.backup.parentStory.insertLabel('journal-role',record.role);
+                }
+            }
+            d.recompose();throw error;
         }
-
-        fragments=continuedTableFragments(d);
-
-        for(i=0;i<fragments.length;i++){
-
-            var spec=fragments[i],marker=null,items=d.allPageItems;
-
-            for(var j=0;j<items.length;j++)if(items[j].label===spec.key)marker=items[j];
-
-            if(!marker)marker=template.duplicate(spec.frame.parentPage);
-
-            marker.label=spec.key;marker.parentStory.insertLabel('journal-role','tableContinuation');
-
-            var fb=spec.frame.geometricBounds,baseTop=Number(spec.frame.extractLabel('journal-continuation-base-top'));
-
-            marker.geometricBounds=[baseTop,fb[1],baseTop+height,fb[3]];
-
-        }
-
-        d.recompose();return {markers:fragments.length};
-
+        for(mi=0;mi<markers.length;mi++)markers[mi].backup.remove();
+        return {markers:fragments.length,removedMarkers:removed,restoredFrames:restored};
     }
 
     function continuedTableIssues(d){
@@ -223,10 +246,24 @@ var JournalLayout = (function () {
 
             var marker=matches[0],mb=marker.geometricBounds,fb=spec.frame.geometricBounds,p=marker.paragraphs[0];
 
-            if(meaningful(marker.contents)!=='（续表）'||Number(p.pointSize)!==9||Number(p.leading)!==12||marker.parentPage.id!==spec.frame.parentPage.id||Math.abs(mb[1]-fb[1])>.02||Math.abs(mb[3]-fb[3])>.02||Math.abs(fb[0]-mb[2]-1)>.02||marker.overflows)issues.push(spec.key+' format-or-position');
+            if(meaningful(marker.contents)!=='（续表）'||Number(p.pointSize)!==9||Number(p.leading)!==12||marker.nonprinting||(marker.itemLayer&&(!marker.itemLayer.visible||!marker.itemLayer.printable))||marker.parentPage.id!==spec.frame.parentPage.id||Math.abs(mb[1]-fb[1])>.02||Math.abs(mb[3]-fb[3])>.02||Math.abs(fb[0]-mb[2]-1)>.02||marker.overflows)issues.push(spec.key+' format-or-position');
 
         }
 
+        var expected={},labels={},frameIds={},tables=articleTables(d),all=d.allPageItems;
+        for(i=0;i<fragments.length;i++)expected[fragments[i].key]=true;
+        for(i=0;i<tables.length;i++)labels[tables[i].label]=true;
+        var allFrames=continuationFrames(d);
+        for(i=0;i<allFrames.length;i++)frameIds[allFrames[i].id]=true;
+        for(i=0;i<all.length;i++){
+            var match=String(all[i].label).match(/^journal-continued-(source-table-[0-9]+)-([0-9]+)$/);
+            if(match&&labels[match[1]]&&frameIds[Number(match[2])]&&!expected[all[i].label])issues.push(all[i].label+' stale-marker');
+        }
+        var activeFrames={};for(i=0;i<fragments.length;i++)activeFrames[fragments[i].frame.id]=true;
+        for(i=0;i<allFrames.length;i++){
+            var frame=allFrames[i];
+            if(frame.extractLabel('journal-continuation-base-top')!==''&&!activeFrames[frame.id])issues.push('frame '+frame.id+' stale-reserve');
+        }
         return issues;
 
     }
@@ -351,6 +388,49 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
 
 
+    function captionGapContract(c){
+        if(R.captionGap!==5||(c&&c.figureCaptionGapPt!==undefined&&c.figureCaptionGapPt!==5))throw Error('FIGURE_CAPTION_GAP_CONTRACT expected=5pt');
+        return R.captionGap;
+    }
+
+    function measurementPt(value){
+        var unit=app.scriptPreferences.measurementUnit,n=Number(value);
+        if(unit===MeasurementUnits.POINTS||String(unit)==='AUTO_VALUE')return n;
+        if(unit===MeasurementUnits.MILLIMETERS)return n*72/25.4;
+        if(unit===MeasurementUnits.CENTIMETERS)return n*72/2.54;
+        if(unit===MeasurementUnits.INCHES)return n*72;
+        if(unit===MeasurementUnits.PICAS)return n*12;
+        throw Error('FIGURE_CAPTION_MEASUREMENT_UNIT');
+    }
+
+    function inlineCaptionSpacing(d,apply){
+        var errors=[],stories=scope(d),required=captionGapContract(),changed=false;
+        for(var si=0;si<stories.length;si++){
+            var story=stories[si],storyRole=story.extractLabel('journal-role');
+            if(storyRole!=='body'&&storyRole!=='figures'&&storyRole!=='captions'&&storyRole!=='figureCaption')continue;
+            for(var pi=2;pi<story.paragraphs.length;pi++){
+                var p=story.paragraphs[pi],text=String(p.contents);
+                if(role(p,storyRole)!=='caption'||!/^\s*(?:图\s*[0-9]+\s|[（(][a-zA-Z][）)])/.test(text))continue;
+                var gap=story.paragraphs[pi-1],anchor=story.paragraphs[pi-2];
+                if(meaningful(gap.contents)||meaningful(anchor.contents)||gap.tables.length||anchor.tables.length||gap.allPageItems.length)continue;
+                var objects=anchor.allPageItems,image=false;
+                for(var oi=0;oi<objects.length;oi++){
+                    var object=objects[oi];
+                    if(/^source-formula-/.test(String(object.label)))continue;
+                    if(object.parent.constructor.name==='Character'&&object.allGraphics&&object.allGraphics.length){image=true;break;}
+                }
+                if(!image)continue;
+                var actual=measurementPt(gap.leading),extra=measurementPt(anchor.spaceAfter)+measurementPt(gap.spaceBefore)+measurementPt(gap.spaceAfter)+measurementPt(p.spaceBefore);
+                if(!isFinite(actual)||Math.abs(actual-required)>.001||!isFinite(extra)||Math.abs(extra)>.001){
+                    if(apply){gap.leading=String(required)+'pt';anchor.spaceAfter=0;gap.spaceBefore=0;gap.spaceAfter=0;p.spaceBefore=0;changed=true;}
+                    else errors.push(story.id+'/'+pi+' actual='+actual+' expected='+required+' additiveSpacing='+extra);
+                }
+            }
+        }
+        if(changed)d.recompose();
+        return errors;
+    }
+
     function separateCaptionSpacing(d,apply){
 
         var result=[],stories=scope(d),items=d.allPageItems;
@@ -377,7 +457,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
             if(apply){
 
-                var dy=(5-gap)*25.4/72,b=frame.geometricBounds,oldBottom=b[2];frame.geometricBounds=[b[0]+dy,b[1],b[2]+dy,b[3]];
+                var dy=(R.captionGap-gap)*25.4/72,b=frame.geometricBounds,oldBottom=b[2];frame.geometricBounds=[b[0]+dy,b[1],b[2]+dy,b[3]];
 
                 var bodyFrames=one(d,'body').textContainers;
 
@@ -701,7 +781,30 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
     function applyEnglishAffiliationSpacing(p){var base=Number(p.appliedParagraphStyle.leading);if(base!==25)throw Error('EN_AFFILIATION_STYLE_CONTRACT '+base);p.leading=base;for(var i=0;i+1<p.lines.length;i++)p.lines[i].characters.everyItem().leading=15;}
 
+    function bodyIndentation(d,apply,c){
+        var errors=[],stories=scope(d),contract=c&&c.bodyIndentContract,exceptions=c&&c.bodyIndentExceptions||[];
+        for(var si=0;si<stories.length;si++)for(var pi=0;pi<stories[si].paragraphs.length;pi++){
+            var p=stories[si].paragraphs[pi],text=String(p.contents);
+            if(role(p,stories[si].extractLabel('journal-role'))!=='body'||!meaningful(text)||p.tables.length||/^\s*(?:图|表)\s*[0-9]+\s/.test(text))continue;
+            var expected=Number(p.appliedParagraphStyle.firstLineIndent),actual=Number(p.firstLineIndent),where=stories[si].id+'/'+pi;
+            var excepted=false;
+            for(var ei=0;ei<exceptions.length;ei++)if(exceptions[ei].reason&&Number(exceptions[ei].storyId)===Number(stories[si].id)&&String(exceptions[ei].paragraphText)===text.replace(/\r$/,''))excepted=true;
+            if(excepted)continue;
+            if(!isFinite(expected)||expected<=0){errors.push(where+' BODY_INDENT_TEMPLATE');continue;}
+            var contractForStyle=contract&&contract.verified===true&&contract.source&&contract.styleName===String(p.appliedParagraphStyle.name);
+            var verified=contractForStyle&&typeof contract.firstLineIndentPt==='number'&&Math.abs(measurementPt(expected)-contract.firstLineIndentPt)<.05;
+            if(contractForStyle&&!verified){errors.push(where+' BODY_INDENT_CONTRACT style='+measurementPt(expected)+'pt expected='+contract.firstLineIndentPt+'pt');continue;}
+            if(!isFinite(actual)||Math.abs(actual-expected)>.001){
+                if(apply&&Math.abs(actual)<.001&&verified)p.firstLineIndent=p.appliedParagraphStyle.firstLineIndent;
+                else errors.push(where+' actual='+actual+' expected='+expected);
+            }
+        }
+        return errors;
+    }
+
     function applyTypography(d,config){
+
+        captionGapContract(config);
 
 
 
@@ -753,7 +856,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
                 p.pointSize=R.bodySize;p.leading=15;
 
-                if(p.justification===Justification.RIGHT_ALIGN){p.justification=Justification.LEFT_JUSTIFIED;p.firstLineIndent=7.76111111111111;}
+                if(p.justification===Justification.RIGHT_ALIGN)p.justification=Justification.LEFT_JUSTIFIED;
 
             }
 
@@ -779,7 +882,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
         if(config&&config.widePanelBoundaries)for(var wi=0;wi<config.widePanelBoundaries.length;wi++)for(var pi=0;pi<one(d,'body').paragraphs.length;pi++){var p=one(d,'body').paragraphs[pi];if(meaningful(p.contents)===meaningful(config.widePanelBoundaries[wi].paragraphText)&&config.widePanelBoundaries[wi].keepAllLinesTogether===true){p.keepLinesTogether=true;p.keepAllLinesTogether=true;}}
 
-        normalizeStructuralSpacing(d);formulaPadding(d,true);separateCaptionSpacing(d,true);finishTypography(d);applySourceTableFormatting(d,config);sourceTextFormatting(d,config,true);sourceFormulaNumbering(d,config,true);protectLineTokens(d);formulaLineSpacing(d,true);
+        normalizeStructuralSpacing(d);formulaPadding(d,true);separateCaptionSpacing(d,true);finishTypography(d);applySourceTableFormatting(d,config);sourceTextFormatting(d,config,true);sourceFormulaNumbering(d,config,true);protectLineTokens(d);formulaLineSpacing(d,true);bodyIndentation(d,true,config);inlineCaptionSpacing(d,true);
 
     }
 
@@ -1276,6 +1379,8 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
         function err(code,detail){errors.push({code:code,detail:String(detail)});}
 
+        if(c.figureCaptionGapPt!==undefined&&c.figureCaptionGapPt!==R.captionGap)err('FIGURE_CAPTION_GAP_CONTRACT','expected='+R.captionGap+'pt');
+
         if(!c.sourceTextFormatting&&c.legacyRegressionFixture!==true)err('SOURCE_TEXT_FORMAT_INPUT','sourceLogicalArticle or sourceTextFormatting required');
 
         if(c.requireMasterTextContract&&!c.masterTextExpectations)err('MASTER_TEXT_CONTRACT','required');
@@ -1316,7 +1421,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
         if(c.widePanelBoundaries)for(var wi=0;wi<c.widePanelBoundaries.length;wi++){var boundary=c.widePanelBoundaries[wi],matches=0;for(var bp=0;bp<body.paragraphs.length;bp++){var paragraph=body.paragraphs[bp];if(meaningful(paragraph.contents)!==meaningful(boundary.paragraphText))continue;matches++;var firstPage=paragraph.insertionPoints[0].parentTextFrames[0].parentPage.documentOffset,lastPage=paragraph.insertionPoints[-2].parentTextFrames[0].parentPage.documentOffset;if(boundary.requireBeforePage===true&&lastPage>=boundary.pageIndex)err('PARAGRAPH_CROSSES_WIDE_PANEL',boundary.paragraphText.substring(0,30));}if(boundary.followingParagraphText){var followingCount=0;for(var fp=0;fp<body.paragraphs.length;fp++){var following=body.paragraphs[fp];if(meaningful(following.contents)!==meaningful(boundary.followingParagraphText))continue;followingCount++;var owners=following.insertionPoints[0].parentTextFrames;if(!owners.length||owners[0].parentPage.documentOffset<boundary.pageIndex)err('WIDE_PANEL_FOLLOWING_BEFORE_FIGURE',boundary.followingParagraphText);}if(followingCount!==1)err('WIDE_PANEL_FOLLOWING_COUNT',followingCount);}if(matches!==1)err('WIDE_PANEL_PARAGRAPH_COUNT',matches);}
 
-        var separateGaps=separateCaptionSpacing(d,false);for(var sg=0;sg<separateGaps.length;sg++)if(Math.abs(separateGaps[sg].gap-5)>.03)err('SUBFIGURE_CAPTION_GAP',separateGaps[sg].number+' '+separateGaps[sg].gap);
+        var separateGaps=separateCaptionSpacing(d,false);for(var sg=0;sg<separateGaps.length;sg++)if(Math.abs(separateGaps[sg].gap-R.captionGap)>.03)err('SUBFIGURE_CAPTION_GAP',separateGaps[sg].number+' '+separateGaps[sg].gap);
 
         var cacheErrors=formulaCacheIssues(d,c);for(var fce=0;fce<cacheErrors.length;fce++)err('FORMULA_CACHE_VERSION',cacheErrors[fce]);
         var numberingErrors=sourceFormulaNumbering(d,c,false);for(var ne=0;ne<numberingErrors.length;ne++)err("SOURCE_FORMULA_NUMBER",numberingErrors[ne]);
@@ -1327,6 +1432,8 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
         var formatErrors=sourceTextFormatting(d,c,false);for(var fe=0;fe<formatErrors.length;fe++)err('SOURCE_TEXT_FORMAT',formatErrors[fe]);
 
+        var inlineGaps=inlineCaptionSpacing(d,false);for(var ig=0;ig<inlineGaps.length;ig++)err('INLINE_FIGURE_CAPTION_GAP',inlineGaps[ig]);
+        var indentErrors=bodyIndentation(d,false,c);for(var ie=0;ie<indentErrors.length;ie++)err('BODY_FIRST_LINE_INDENT',indentErrors[ie]);
         var figures=0,conclusion=-1;
 
         for(var k=0;k<stories.length;k++)for(var i=0;i<stories[k].paragraphs.length;i++){
@@ -1362,7 +1469,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
                     if(i===0||meaningful(stories[k].paragraphs[i-1].contents))err('FIGURE_GAP_STRUCTURE',where);
 
-                    else{var gap=stories[k].paragraphs[i-1];if(Number(gap.leading)!==5||Math.abs((p.lines[0].baseline-gap.lines[-1].baseline)*72/25.4-5)>.02)err('CAPTION_GAP',where);}
+                    else{var gap=stories[k].paragraphs[i-1];if(Number(gap.leading)!==R.captionGap||Math.abs((p.lines[0].baseline-gap.lines[-1].baseline)*72/25.4-R.captionGap)>.02)err('CAPTION_GAP',where);}
 
                 }
 
@@ -1536,8 +1643,8 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
     }
 
-    function run(d,c,apply){assertQA(d);if(apply&&(c.articlePageRange||c.articlePageIndices))throw Error('FULL_TARGET_CHECK_ONLY');if(apply){var recovery=Folder(File(c.auditPath).parent.fsName+'/恢复副本');if(!recovery.exists&&!recovery.create())throw Error('RECOVERY_DIRECTORY');d.saveACopy(File(recovery.fsName+'/'+d.name.replace(/\.indd$/i,'')+'_'+new Date().getTime()+'.indd'));d.viewPreferences.rulerOrigin=RulerOrigin.PAGE_ORIGIN;d.zeroPoint=[0,0];}bind(d,c,apply);if(apply){applyTypography(d,c);geometry(d,c);fitFormulaNumbers(d);repairOrphans(d);if(c.bottomPlan){alignLocalBlocks(d,c);figureWhitespace(d,c,true);JournalBottomPlan.apply(d,c.bottomPlan);}else{alignLocalBlocks(d,c);repairOrphans(d);alignBottom(d);figureWhitespace(d,c,true);}}var view=auditView(d,c),result=audit(view,c);var pf=preflight(d);result.observations.push('PREFLIGHT '+pf.summary);if(String(pf.summary).split(String.fromCharCode(13)).join('').split(String.fromCharCode(10)).join('').replace(/ /g,'')!=='None'){var pageNames=[];for(var pfi=0;pfi<d.pages.length;pfi++)pageNames.push(d.pages[pfi].name);var issues=partitionPreflight(pf.aggregated,pageNames,c.articlePageRange,c.articlePageIndices);if(!issues.scoped.length&&!issues.outside.length&&!issues.unknown.length)issues.unknown.push({reason:'PREFLIGHT_DETAILS_EMPTY'});if(issues.scoped.length||issues.unknown.length)result.errors.push({code:'PREFLIGHT',detail:pf.summary});for(var pfi=0;pfi<issues.outside.length;pfi++)result.observations.push('PREFLIGHT_OUTSIDE_ARTICLE page='+issues.outside[pfi].page+' '+issues.outside[pfi].name);}xml(view,result,c.auditPath);return result;}
+    function run(d,c,apply){assertQA(d);if(apply)captionGapContract(c);if(apply&&(c.articlePageRange||c.articlePageIndices))throw Error('FULL_TARGET_CHECK_ONLY');if(apply){var recovery=Folder(File(c.auditPath).parent.fsName+'/恢复副本');if(!recovery.exists&&!recovery.create())throw Error('RECOVERY_DIRECTORY');d.saveACopy(File(recovery.fsName+'/'+d.name.replace(/\.indd$/i,'')+'_'+new Date().getTime()+'.indd'));d.viewPreferences.rulerOrigin=RulerOrigin.PAGE_ORIGIN;d.zeroPoint=[0,0];}bind(d,c,apply);if(apply){applyTypography(d,c);geometry(d,c);fitFormulaNumbers(d);repairOrphans(d);if(c.bottomPlan){alignLocalBlocks(d,c);figureWhitespace(d,c,true);JournalBottomPlan.apply(d,c.bottomPlan);}else{alignLocalBlocks(d,c);repairOrphans(d);alignBottom(d);figureWhitespace(d,c,true);}}var view=auditView(d,c),result=audit(view,c);var pf=preflight(d);result.observations.push('PREFLIGHT '+pf.summary);if(String(pf.summary).split(String.fromCharCode(13)).join('').split(String.fromCharCode(10)).join('').replace(/ /g,'')!=='None'){var pageNames=[];for(var pfi=0;pfi<d.pages.length;pfi++)pageNames.push(d.pages[pfi].name);var issues=partitionPreflight(pf.aggregated,pageNames,c.articlePageRange,c.articlePageIndices);if(!issues.scoped.length&&!issues.outside.length&&!issues.unknown.length)issues.unknown.push({reason:'PREFLIGHT_DETAILS_EMPTY'});if(issues.scoped.length||issues.unknown.length)result.errors.push({code:'PREFLIGHT',detail:pf.summary});for(var pfi=0;pfi<issues.outside.length;pfi++)result.observations.push('PREFLIGHT_OUTSIDE_ARTICLE page='+issues.outside[pfi].page+' '+issues.outside[pfi].name);}xml(view,result,c.auditPath);return result;}
 
-    return {digitFontMatches:digitFontMatches,auditView:auditView,sourceTableCharacterMatches:sourceTableCharacterMatches,specialGlyphRangeFontAllowed:specialGlyphRangeFontAllowed,balanceLastPage:balanceLastPage,lineChangeTrackingChoices:lineChangeTrackingChoices,fitFirstPageFrontTracking:fitFirstPageFrontTracking,receivedSeparatorY:receivedSeparatorY,applyBiographyLabelStyle:applyBiographyLabelStyle,repairTemplateDetails:repairTemplateDetails,formulaCacheIssues:formulaCacheIssues,repairBiographyHeadingLeading:repairBiographyHeadingLeading,normalizeDigitFonts:normalizeDigitFonts,prepareFinalPageReflow:prepareFinalPageReflow,applyEnglishAffiliationSpacing:applyEnglishAffiliationSpacing,orphanScope:orphanScope,bodyLeadingLimit:bodyLeadingLimit,bodyLeadingMinimum:bodyLeadingMinimum,formulaLineSpacing:formulaLineSpacing,formulaPadding:formulaPadding,removableHeadingBlank:removableHeadingBlank,separateCaptionSpacing:separateCaptionSpacing,formulaPlacementAllowed:formulaPlacementAllowed,normalizeTableCaption:normalizeTableCaption,normalizeStructuralSpacing:normalizeStructuralSpacing,sourceFormulaNumbering:sourceFormulaNumbering,sourceProjection:sourceProjection,sourceTextFormatting:sourceTextFormatting,forbiddenLineStart:forbiddenLineStart,graphicIsCropped:graphicIsCropped,partitionPreflight:partitionPreflight,run:run,audit:audit,continuedTableFragments:continuedTableFragments,syncContinuedTables:syncContinuedTables,continuedTableIssues:continuedTableIssues,sourceCaptionRange:sourceCaptionRange,xml:xml,bind:bind,rules:R,specialGlyphFont:specialGlyphFont,glyphFontIssue:glyphFontIssue,applySpecialGlyphs:applySpecialGlyphs,applyTypography:applyTypography,geometry:geometry,alignBottom:alignBottom,fitFormulaNumbers:fitFormulaNumbers,repairOrphans:repairOrphans,orphanLine:orphanLine,inkBounds:inkBounds,applySourceTableFormatting:applySourceTableFormatting,protectedTokens:protectedTokens,protectLineTokens:protectLineTokens,last:last,visibleBottom:visibleBottom,alignLocalBlocks:alignLocalBlocks,figureWhitespace:figureWhitespace,figurePanelCenter:figurePanelCenter,masterTextIssues:masterTextIssues,applyBottomPlan:function(d,p){return JournalBottomPlan.apply(d,p);}};
+    return {captionGapContract:captionGapContract,inlineCaptionSpacing:inlineCaptionSpacing,bodyIndentation:bodyIndentation,digitFontMatches:digitFontMatches,auditView:auditView,sourceTableCharacterMatches:sourceTableCharacterMatches,specialGlyphRangeFontAllowed:specialGlyphRangeFontAllowed,balanceLastPage:balanceLastPage,lineChangeTrackingChoices:lineChangeTrackingChoices,fitFirstPageFrontTracking:fitFirstPageFrontTracking,receivedSeparatorY:receivedSeparatorY,applyBiographyLabelStyle:applyBiographyLabelStyle,repairTemplateDetails:repairTemplateDetails,formulaCacheIssues:formulaCacheIssues,repairBiographyHeadingLeading:repairBiographyHeadingLeading,normalizeDigitFonts:normalizeDigitFonts,prepareFinalPageReflow:prepareFinalPageReflow,applyEnglishAffiliationSpacing:applyEnglishAffiliationSpacing,orphanScope:orphanScope,bodyLeadingLimit:bodyLeadingLimit,bodyLeadingMinimum:bodyLeadingMinimum,formulaLineSpacing:formulaLineSpacing,formulaPadding:formulaPadding,removableHeadingBlank:removableHeadingBlank,separateCaptionSpacing:separateCaptionSpacing,formulaPlacementAllowed:formulaPlacementAllowed,normalizeTableCaption:normalizeTableCaption,normalizeStructuralSpacing:normalizeStructuralSpacing,sourceFormulaNumbering:sourceFormulaNumbering,sourceProjection:sourceProjection,sourceTextFormatting:sourceTextFormatting,forbiddenLineStart:forbiddenLineStart,graphicIsCropped:graphicIsCropped,partitionPreflight:partitionPreflight,run:run,audit:audit,continuedTableFragments:continuedTableFragments,syncContinuedTables:syncContinuedTables,continuedTableIssues:continuedTableIssues,sourceCaptionRange:sourceCaptionRange,xml:xml,bind:bind,rules:R,specialGlyphFont:specialGlyphFont,glyphFontIssue:glyphFontIssue,applySpecialGlyphs:applySpecialGlyphs,applyTypography:applyTypography,geometry:geometry,alignBottom:alignBottom,fitFormulaNumbers:fitFormulaNumbers,repairOrphans:repairOrphans,orphanLine:orphanLine,inkBounds:inkBounds,applySourceTableFormatting:applySourceTableFormatting,protectedTokens:protectedTokens,protectLineTokens:protectLineTokens,last:last,visibleBottom:visibleBottom,alignLocalBlocks:alignLocalBlocks,figureWhitespace:figureWhitespace,figurePanelCenter:figurePanelCenter,masterTextIssues:masterTextIssues,applyBottomPlan:function(d,p){return JournalBottomPlan.apply(d,p);}};
 
 })();
