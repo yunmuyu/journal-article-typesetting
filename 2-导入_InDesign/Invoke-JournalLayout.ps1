@@ -164,7 +164,7 @@ try {
  if($apply&&!opened)throw Error('APPLY_TARGET_ALREADY_OPEN');
 
 
- if(cfg.articlePageRange){
+ if(cfg.articlePageRange||cfg.articlePageIndices){
 
 
   if($apply)throw Error('FULL_TARGET_CHECK_ONLY');
@@ -215,7 +215,7 @@ try {
   var folder=Folder(File(cfg.auditPath).parent.fsName+'/'+d.name.replace(/\.indd$/i,'')+'_预览');if(!folder.exists)folder.create();
 
 
-  if(cfg.articlePageRange){folder=Folder(folder.fsName+'/article-'+cfg.articlePageRange[0]+'-'+cfg.articlePageRange[1]);if(!folder.exists)folder.create();}
+  if(cfg.articlePageIndices){folder=Folder(folder.fsName+'/article-pages-'+cfg.articlePageIndices.join('-'));if(!folder.exists)folder.create();}else if(cfg.articlePageRange){folder=Folder(folder.fsName+'/article-'+cfg.articlePageRange[0]+'-'+cfg.articlePageRange[1]);if(!folder.exists)folder.create();}
 
 
   var prefs=app.jpegExportPreferences,old=prefs.properties;
@@ -227,7 +227,7 @@ try {
    var first=cfg.articlePageRange?cfg.articlePageRange[0]:0,last=cfg.articlePageRange?cfg.articlePageRange[1]:d.pages.length-1,pages=[];
 
 
-   if(previewScope==='Full'){for(var i=first;i<=last;i++)pages.push(i);}else{
+   if(cfg.articlePageIndices){pages=cfg.articlePageIndices.slice(0);}else if(previewScope==='Full'){for(var i=first;i<=last;i++)pages.push(i);}else{
 
 
     pages.push(first);pages.push(last);
