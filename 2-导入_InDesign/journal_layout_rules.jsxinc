@@ -16,6 +16,15 @@ var JournalLayout = (function () {
 
     function family(r){return String(r.appliedFont.name).split(String.fromCharCode(9))[0];}
 
+    function digitFontMatches(d,character){
+        var name=family(character);if(name==='Times New Roman')return true;
+        if(!d.compositeFonts)return false;
+        var composite=d.compositeFonts.itemByName(name);
+        // Custom character entries may override the numeric range; do not guess.
+        if(!composite.isValid||composite.compositeFontEntries.length!==5)return false;
+        var entry=composite.compositeFontEntries.itemByName('数字');
+        return entry.isValid&&String(entry.appliedFont)==='Times New Roman';
+    }
     function graphicIsCropped(frameBounds,graphicBounds){return graphicBounds[0]<frameBounds[0]-.03||graphicBounds[1]<frameBounds[1]-.03||graphicBounds[2]>frameBounds[2]+.03||graphicBounds[3]>frameBounds[3]+.03;}
 
     function sourceCaptionRange(p,tr,c){
@@ -94,7 +103,21 @@ var JournalLayout = (function () {
 
     }
 
-    function articleTables(d){var a=[],stories=scope(d);for(var i=0;i<stories.length;i++){var roleName=stories[i].extractLabel('journal-role');if(roleName!=='body'&&roleName!=='tables')continue;for(var j=0;j<stories[i].tables.length;j++)a.push(stories[i].tables[j]);}a.sort(function(a,b){return Number(a.label.replace('source-table-',''))-Number(b.label.replace('source-table-',''));});return a;}
+    function articleTables(d){
+        var entries=[],tables=[],stories=scope(d),allNumbered=true;
+        for(var i=0;i<stories.length;i++){
+            var roleName=stories[i].extractLabel('journal-role');if(roleName!=='body'&&roleName!=='tables')continue;
+            for(var j=0;j<stories[i].tables.length;j++){
+                var table=stories[i].tables[j],match=String(table.label).match(/^source-table-([1-9][0-9]*)$/);
+                if(!match)allNumbered=false;
+                entries.push({table:table,number:match?Number(match[1]):0,order:entries.length});
+            }
+        }
+        // ExtendScript sort is unstable: retain story order for unlabeled imports.
+        if(allNumbered)entries.sort(function(a,b){return a.number-b.number||a.order-b.order;});
+        for(var i=0;i<entries.length;i++)tables.push(entries[i].table);
+        return tables;
+    }
 
     function continuedTableFragments(d){
 
@@ -1369,7 +1392,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
             }
 
-            if(digitRole(r)){var dc=p.characters.everyItem().getElements();for(var di=0;di<dc.length;di++)if(/^[0-9]$/.test(String(dc[di].contents))&&family(dc[di])!=='Times New Roman')err('DIGIT_FONT',where+' character '+dc[di].index);}
+            if(digitRole(r)){var dc=p.characters.everyItem().getElements();for(var di=0;di<dc.length;di++)if(/^[0-9]$/.test(String(dc[di].contents))&&!digitFontMatches(d,dc[di]))err('DIGIT_FONT',where+' character '+dc[di].index);}
 
             if(r==='body'||r==='formula'){var symbols=p.characters.everyItem().getElements();for(var si=0;si<symbols.length;si++)if((symbols[si].contents==='≤'||symbols[si].contents==='≥')&&family(symbols[si])!=='宋体')err('COMPARISON_FONT',where+' character '+symbols[si].index);}
 
@@ -1429,7 +1452,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
             var t=tables[i];if(t.headerRowCount!==(c.tableHeaderRows&&c.tableHeaderRows[i]||1))err('TABLE_HEADER',i);
 
-            for(var j=0;j<t.cells.length;j++){var cell=t.cells[j];if(cell.overflows)err('CELL_OVERSET',i+'/'+j);if(cell.texts[0].lines.length>1)for(var ol=0;ol<cell.texts[0].lines.length;ol++)if(orphanLine(cell.texts[0].lines[ol]))err('TABLE_ORPHAN',i+'/'+j+'/'+ol);var digits=cell.texts[0].characters.everyItem().getElements();for(var di=0;di<digits.length;di++)if(/^[0-9]$/.test(String(digits[di].contents))&&family(digits[di])!=='Times New Roman')err('DIGIT_FONT','table '+i+'/'+j+' character '+di);var rs=cell.texts[0].textStyleRanges.everyItem().getElements();for(var q=0;q<rs.length;q++)if(meaningful(rs[q].contents)&&(family(rs[q])!==R.bodyFont&&family(rs[q])!=='Times New Roman'&&!specialGlyphRangeFontAllowed(rs[q].contents,family(rs[q]))||Number(rs[q].pointSize)!==9||Number(rs[q].leading)!==12))err('TABLE_FONT',i+'/'+j);}
+            for(var j=0;j<t.cells.length;j++){var cell=t.cells[j];if(cell.overflows)err('CELL_OVERSET',i+'/'+j);if(cell.texts[0].lines.length>1)for(var ol=0;ol<cell.texts[0].lines.length;ol++)if(orphanLine(cell.texts[0].lines[ol]))err('TABLE_ORPHAN',i+'/'+j+'/'+ol);var digits=cell.texts[0].characters.everyItem().getElements();for(var di=0;di<digits.length;di++)if(/^[0-9]$/.test(String(digits[di].contents))&&!digitFontMatches(d,digits[di]))err('DIGIT_FONT','table '+i+'/'+j+' character '+di);var rs=cell.texts[0].textStyleRanges.everyItem().getElements();for(var q=0;q<rs.length;q++)if(meaningful(rs[q].contents)&&(family(rs[q])!==R.bodyFont&&family(rs[q])!=='Times New Roman'&&!specialGlyphRangeFontAllowed(rs[q].contents,family(rs[q]))||Number(rs[q].pointSize)!==9||Number(rs[q].leading)!==12))err('TABLE_FONT',i+'/'+j);}
 
             var frames={};for(var j=0;j<t.rows.length;j++){var row=t.rows[j],multi=false;for(var q=0;q<row.cells.length;q++){var ls=row.cells[q].texts[0].lines;if(ls.length>1)multi=true;}if(!multi&&(row.height<4.799||row.height>5.501))err('TABLE_HEIGHT',i+'/'+j);for(var rc=0;rc<row.cells.length;rc++){var rowFrames=row.cells[rc].texts[0].parentTextFrames;for(var rf=0;rf<rowFrames.length;rf++)frames[rowFrames[rf].id]=true;}}
 
@@ -1515,6 +1538,6 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
     function run(d,c,apply){assertQA(d);if(apply&&(c.articlePageRange||c.articlePageIndices))throw Error('FULL_TARGET_CHECK_ONLY');if(apply){var recovery=Folder(File(c.auditPath).parent.fsName+'/恢复副本');if(!recovery.exists&&!recovery.create())throw Error('RECOVERY_DIRECTORY');d.saveACopy(File(recovery.fsName+'/'+d.name.replace(/\.indd$/i,'')+'_'+new Date().getTime()+'.indd'));d.viewPreferences.rulerOrigin=RulerOrigin.PAGE_ORIGIN;d.zeroPoint=[0,0];}bind(d,c,apply);if(apply){applyTypography(d,c);geometry(d,c);fitFormulaNumbers(d);repairOrphans(d);if(c.bottomPlan){alignLocalBlocks(d,c);figureWhitespace(d,c,true);JournalBottomPlan.apply(d,c.bottomPlan);}else{alignLocalBlocks(d,c);repairOrphans(d);alignBottom(d);figureWhitespace(d,c,true);}}var view=auditView(d,c),result=audit(view,c);var pf=preflight(d);result.observations.push('PREFLIGHT '+pf.summary);if(String(pf.summary).split(String.fromCharCode(13)).join('').split(String.fromCharCode(10)).join('').replace(/ /g,'')!=='None'){var pageNames=[];for(var pfi=0;pfi<d.pages.length;pfi++)pageNames.push(d.pages[pfi].name);var issues=partitionPreflight(pf.aggregated,pageNames,c.articlePageRange,c.articlePageIndices);if(!issues.scoped.length&&!issues.outside.length&&!issues.unknown.length)issues.unknown.push({reason:'PREFLIGHT_DETAILS_EMPTY'});if(issues.scoped.length||issues.unknown.length)result.errors.push({code:'PREFLIGHT',detail:pf.summary});for(var pfi=0;pfi<issues.outside.length;pfi++)result.observations.push('PREFLIGHT_OUTSIDE_ARTICLE page='+issues.outside[pfi].page+' '+issues.outside[pfi].name);}xml(view,result,c.auditPath);return result;}
 
-    return {auditView:auditView,sourceTableCharacterMatches:sourceTableCharacterMatches,specialGlyphRangeFontAllowed:specialGlyphRangeFontAllowed,balanceLastPage:balanceLastPage,lineChangeTrackingChoices:lineChangeTrackingChoices,fitFirstPageFrontTracking:fitFirstPageFrontTracking,receivedSeparatorY:receivedSeparatorY,applyBiographyLabelStyle:applyBiographyLabelStyle,repairTemplateDetails:repairTemplateDetails,formulaCacheIssues:formulaCacheIssues,repairBiographyHeadingLeading:repairBiographyHeadingLeading,normalizeDigitFonts:normalizeDigitFonts,prepareFinalPageReflow:prepareFinalPageReflow,applyEnglishAffiliationSpacing:applyEnglishAffiliationSpacing,orphanScope:orphanScope,bodyLeadingLimit:bodyLeadingLimit,bodyLeadingMinimum:bodyLeadingMinimum,formulaLineSpacing:formulaLineSpacing,formulaPadding:formulaPadding,removableHeadingBlank:removableHeadingBlank,separateCaptionSpacing:separateCaptionSpacing,formulaPlacementAllowed:formulaPlacementAllowed,normalizeTableCaption:normalizeTableCaption,normalizeStructuralSpacing:normalizeStructuralSpacing,sourceFormulaNumbering:sourceFormulaNumbering,sourceProjection:sourceProjection,sourceTextFormatting:sourceTextFormatting,forbiddenLineStart:forbiddenLineStart,graphicIsCropped:graphicIsCropped,partitionPreflight:partitionPreflight,run:run,audit:audit,continuedTableFragments:continuedTableFragments,syncContinuedTables:syncContinuedTables,continuedTableIssues:continuedTableIssues,sourceCaptionRange:sourceCaptionRange,xml:xml,bind:bind,rules:R,specialGlyphFont:specialGlyphFont,glyphFontIssue:glyphFontIssue,applySpecialGlyphs:applySpecialGlyphs,applyTypography:applyTypography,geometry:geometry,alignBottom:alignBottom,fitFormulaNumbers:fitFormulaNumbers,repairOrphans:repairOrphans,orphanLine:orphanLine,inkBounds:inkBounds,applySourceTableFormatting:applySourceTableFormatting,protectedTokens:protectedTokens,protectLineTokens:protectLineTokens,last:last,visibleBottom:visibleBottom,alignLocalBlocks:alignLocalBlocks,figureWhitespace:figureWhitespace,figurePanelCenter:figurePanelCenter,masterTextIssues:masterTextIssues,applyBottomPlan:function(d,p){return JournalBottomPlan.apply(d,p);}};
+    return {digitFontMatches:digitFontMatches,auditView:auditView,sourceTableCharacterMatches:sourceTableCharacterMatches,specialGlyphRangeFontAllowed:specialGlyphRangeFontAllowed,balanceLastPage:balanceLastPage,lineChangeTrackingChoices:lineChangeTrackingChoices,fitFirstPageFrontTracking:fitFirstPageFrontTracking,receivedSeparatorY:receivedSeparatorY,applyBiographyLabelStyle:applyBiographyLabelStyle,repairTemplateDetails:repairTemplateDetails,formulaCacheIssues:formulaCacheIssues,repairBiographyHeadingLeading:repairBiographyHeadingLeading,normalizeDigitFonts:normalizeDigitFonts,prepareFinalPageReflow:prepareFinalPageReflow,applyEnglishAffiliationSpacing:applyEnglishAffiliationSpacing,orphanScope:orphanScope,bodyLeadingLimit:bodyLeadingLimit,bodyLeadingMinimum:bodyLeadingMinimum,formulaLineSpacing:formulaLineSpacing,formulaPadding:formulaPadding,removableHeadingBlank:removableHeadingBlank,separateCaptionSpacing:separateCaptionSpacing,formulaPlacementAllowed:formulaPlacementAllowed,normalizeTableCaption:normalizeTableCaption,normalizeStructuralSpacing:normalizeStructuralSpacing,sourceFormulaNumbering:sourceFormulaNumbering,sourceProjection:sourceProjection,sourceTextFormatting:sourceTextFormatting,forbiddenLineStart:forbiddenLineStart,graphicIsCropped:graphicIsCropped,partitionPreflight:partitionPreflight,run:run,audit:audit,continuedTableFragments:continuedTableFragments,syncContinuedTables:syncContinuedTables,continuedTableIssues:continuedTableIssues,sourceCaptionRange:sourceCaptionRange,xml:xml,bind:bind,rules:R,specialGlyphFont:specialGlyphFont,glyphFontIssue:glyphFontIssue,applySpecialGlyphs:applySpecialGlyphs,applyTypography:applyTypography,geometry:geometry,alignBottom:alignBottom,fitFormulaNumbers:fitFormulaNumbers,repairOrphans:repairOrphans,orphanLine:orphanLine,inkBounds:inkBounds,applySourceTableFormatting:applySourceTableFormatting,protectedTokens:protectedTokens,protectLineTokens:protectLineTokens,last:last,visibleBottom:visibleBottom,alignLocalBlocks:alignLocalBlocks,figureWhitespace:figureWhitespace,figurePanelCenter:figurePanelCenter,masterTextIssues:masterTextIssues,applyBottomPlan:function(d,p){return JournalBottomPlan.apply(d,p);}};
 
 })();
