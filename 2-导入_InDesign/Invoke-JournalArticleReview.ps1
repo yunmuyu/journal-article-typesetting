@@ -59,10 +59,10 @@ foreach($entry in $job.inputs){
         $refreshes.Add([ordered]@{name=$entry.name;path=$path;previousSHA256=$entry.sha256;currentSHA256=$hash;reason='current-installed-tool-source'})
     }
 }
-$required=@('Invoke-JournalArticleAssembly.ps1','Export-JournalLayoutMeasurement.ps1','New-JournalBottomPlan.ps1','Invoke-JournalLayout.ps1','journal_bottom_measurement_request.cjs','journal_tracking_request.cjs','journal_reflow_plan.cjs','complete_assembly_check_config.cjs','journal_regression_snapshot.jsxinc')
+$required=@('Invoke-JournalArticleAssembly.ps1','Export-JournalLayoutMeasurement.ps1','New-JournalBottomPlan.ps1','Invoke-JournalLayout.ps1','journal_bottom_measurement_request.cjs','journal_tracking_request.cjs','journal_reflow_plan.cjs','complete_assembly_check_config.cjs','journal_regression_snapshot.jsxinc','Invoke-JournalGapStage.ps1','journal_gap_solver.jsxinc','journal_gap_layout.jsxinc')
 foreach($name in $required){if(-not(Test-Path -LiteralPath (Join-Path $PSScriptRoot $name))){throw "REVIEW_DEPENDENCY_MISSING $name"}}
 $node=(Get-Command node -ErrorAction Stop).Source
-if($PlanOnly){[ordered]@{status='planned';configPath=$jobPath;documentPath=$job.outputPath;documentId=$documentId;needsBindings=$needsBindings;pageBudgetResolution=$pageBudgetResolution;maxAttempts=$MaxAttempts;inputRefreshes=@($refreshes);humanReview='pending';adobeCalled=$false}|ConvertTo-Json -Depth 15;return}
+if($PlanOnly){[ordered]@{status='planned';configPath=$jobPath;documentPath=$job.outputPath;documentId=$documentId;needsBindings=$needsBindings;pageBudgetResolution=$pageBudgetResolution;maxAttempts=$MaxAttempts;requiredLayoutStages=@('NormalizeExisting','BeforeBottomGap','ApplyBottomExisting','AfterBottomGapAndContinuations','FullCheck');inputRefreshes=@($refreshes);humanReview='pending';adobeCalled=$false}|ConvertTo-Json -Depth 15;return}
 $runDirectory=Join-Path $jobDirectory ('review-run-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $runDirectory|Out-Null
 WriteJson (Join-Path $runDirectory 'input-refreshes.json') @($refreshes)
@@ -149,11 +149,17 @@ try{
         $summary['pageBudgetResolution']=$pageBudgetResolution
         PersistContinuation
     }
+    AssertNativeIdentity $app
+    if($job.PSObject.Properties['inPlace'] -and $job.inPlace -and $job.PSObject.Properties['articlePageRange']){throw 'REVIEW_MERGED_DETAILS_REQUIRES_SCOPED_ENTRY'}
+    & (Join-Path $PSScriptRoot 'Invoke-JournalArticleAssembly.ps1') -ConfigPath $jobPath -Stage NormalizeExisting -QueueDirectory $QueueDirectory -LeaseId $LeaseId
+    PersistContinuation
     PrepareFirstPageGeometry $app
     for($attempt=1;$attempt -le $MaxAttempts;$attempt++){
         $summary.attempts=$attempt;WriteJson $summaryPath $summary
         $directory=Join-Path $runDirectory ('attempt-'+$attempt);New-Item -ItemType Directory -Path $directory|Out-Null
         AssertNativeIdentity $app
+        & (Join-Path $PSScriptRoot 'Invoke-JournalGapStage.ps1') -ConfigPath $job.auditConfigPath -DocumentId $documentId -ReportPath (Join-Path $directory 'gap-before.json') -Phase BeforeBottom
+        PersistContinuation
         $measurement=Join-Path $directory 'measurement.json';$request=Join-Path $directory 'bottom.request.json';$plan=Join-Path $directory 'bottom.plan.json'
         & (Join-Path $PSScriptRoot 'Export-JournalLayoutMeasurement.ps1') -ConfigPath $job.auditConfigPath -OutputPath $measurement -DocumentId $documentId -QueueDirectory $QueueDirectory -LeaseId $LeaseId 2>&1|Tee-Object -FilePath (Join-Path $directory 'measurement.log')
         InvokeNode 'journal_bottom_measurement_request.cjs' @($measurement,$request) (Join-Path $directory 'bottom-request.log')
@@ -166,6 +172,8 @@ try{
             $resolved=ReadJson $operation;$job.panels=$resolved.panels
             PersistContinuation
             AssertNativeIdentity $app
+            & (Join-Path $PSScriptRoot 'Invoke-JournalGapStage.ps1') -ConfigPath $job.auditConfigPath -DocumentId $documentId -ReportPath (Join-Path $directory 'gap-after.json') -Phase AfterBottom
+            PersistContinuation
             & (Join-Path $PSScriptRoot 'Invoke-JournalLayout.ps1') -ConfigPath $job.auditConfigPath -Mode Check -ExportPreview 2>&1|Tee-Object -FilePath (Join-Path $directory 'full-check.log')
             $audit=ReadJson $job.auditConfigPath
             $check=ReadJson ([IO.Path]::ChangeExtension($audit.auditPath,'.result.json'))
@@ -196,6 +204,8 @@ try{
         PersistContinuation
         PrepareFirstPageGeometry $app
         AssertNativeIdentity $app
+        & (Join-Path $PSScriptRoot 'Invoke-JournalGapStage.ps1') -ConfigPath $job.auditConfigPath -DocumentId $documentId -ReportPath (Join-Path $directory 'gap-after.json') -Phase AfterBottom
+        PersistContinuation
         & (Join-Path $PSScriptRoot 'Invoke-JournalLayout.ps1') -ConfigPath $job.auditConfigPath -Mode Check -ExportPreview -AllowValidationFailure 2>&1|Tee-Object -FilePath (Join-Path $directory 'full-check.log')
         $audit=ReadJson $job.auditConfigPath
         $check=ReadJson ([IO.Path]::ChangeExtension($audit.auditPath,'.result.json'))

@@ -106,11 +106,12 @@ function lastPageCandidates(m){
  }
  const result=[];
  for(const paragraph of m.paragraphs){
-  if(paragraph.start<=left.endpoint[0]||!['body','reference','bio'].includes(paragraph.role))continue;
+  if(paragraph.start<=left.endpoint[0])continue;
   const at=lines.findIndex(l=>l.start===paragraph.start);
   if(at<=0)continue;
   const before=m.paragraphs.find(p=>p.start===lines[at-1].paragraphStart);
-  if(before?.keepWithNext>0||['h1','h2','referenceTitle'].includes(before?.role))continue;
+  if(!['body','reference','bio'].includes(paragraph.role)&&!(paragraph.role==='h2'&&before?.role==='h1'))continue;
+  if(before?.keepWithNext>0||['h2','referenceTitle'].includes(before?.role))continue;
   const leftBottom=lines[at-1].global;
   const rightBottom=lines.at(-1).global-lines[at].global+right.bounds[0]+lines[at].ascent;
   if(leftBottom>left.bounds[2]||rightBottom>right.bounds[2])continue;

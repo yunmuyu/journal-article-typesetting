@@ -39,7 +39,7 @@ function fixture(spec) {
     document: {
       recompose() {},
       pages: [page], spreads: [{ pages: [page] }],
-      stories: [story('body'), {...story('front'), textContainers: [{parentPage: page}]}, {...story('footer'), textContainers:[{parentPage:page,lines:[{baseline:100}]}]}],
+      stories: [story('body'), {...story('front'), textContainers:[{parentPage:page,lines:[{baseline:50}]}]}, {...story('footer'), textContainers:[{parentPage:page,lines:[{baseline:100}]}]}],
       allGraphics: graphics, allPageItems: [], allParagraphStyles: [],
       compositeFonts: { itemByName: () => ({ isValid: false }) }
     },

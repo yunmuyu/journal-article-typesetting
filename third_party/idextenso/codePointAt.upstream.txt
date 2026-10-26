@@ -26,4 +26,3 @@
 		// ---
 		return callee.SIZE=2, (0x400*(x-0xD800) + 0x2400 + y);
 	};
-

@@ -1,0 +1,25 @@
+var JournalPageFurniture=(function(){
+ function items(page){var out=[],seen={},sets=[page.allPageItems,page.masterPageItems];for(var s=0;s<sets.length;s++)for(var i=0;i<sets[s].length;i++){var x=sets[s][i];if(!seen[x.id]){seen[x.id]=true;out.push(x);}}return out;}
+ function stamp(x){try{return x.constructor.name==='TextFrame'&&/^\s*20\d\d[.．]\d{2}\s*$/.test(String(x.contents));}catch(e){return false;}}
+ function visible(x){try{return !x.nonprinting&&x.visible!==false&&x.itemLayer.visible!==false&&!x.overflows;}catch(e){return false;}}
+ function dateFrames(page){var all=items(page),out=[];for(var i=0;i<all.length;i++)if(stamp(all[i]))out.push(all[i]);return out;}
+ function audit(d,c){
+  var expected=false,errors=[],i,j,range=c&&c.articlePageRange;
+  for(i=0;i<d.masterSpreads.length;i++)for(j=0;j<d.masterSpreads[i].pages.length;j++)if(dateFrames(d.masterSpreads[i].pages[j]).length)expected=true;
+  if(!expected)return [{code:'FOOTER_DATE_CONTRACT_MISSING',detail:'No date component exists in any master; approved template required'}];
+  for(i=0;i<d.pages.length;i++){
+   if(range&&(i<range[0]||i>range[1]))continue;
+   var p=d.pages[i],frames=dateFrames(p),good=0;
+   for(j=0;j<frames.length;j++)if(visible(frames[j]))good++;
+   if(good!==1)errors.push({code:'FOOTER_DATE_COMPONENT',detail:'page '+p.name+' visible date components='+good+'; master '+(p.appliedMaster&&p.appliedMaster.isValid?p.appliedMaster.name:'none')});
+  }
+  return errors;
+ }
+ function repairMissingDate(targetPage,approvedPage){
+  if(targetPage.side!==approvedPage.side)throw Error('FOOTER_REFERENCE_SIDE_MISMATCH');
+  if(dateFrames(targetPage).length)throw Error('FOOTER_COMPONENT_EXISTS_REQUIRES_DIAGNOSIS');
+  var source=dateFrames(approvedPage);if(source.length!==1||!visible(source[0]))throw Error('FOOTER_REFERENCE_INVALID');
+  return source[0].duplicate(targetPage);
+ }
+ return {audit:audit,dateFrames:dateFrames,repairMissingDate:repairMissingDate};
+})();

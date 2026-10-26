@@ -2,7 +2,7 @@
 
 这是从人工排版示范学习、经赵志威和张芳芳两篇验证的独立项目。第一版基线为 **v1.0.0**；当前工作分支包含后续工具修订。
 
-私有仓库：https://github.com/yunmuyu/journal-article-typesetting
+公开仓库：https://github.com/yunmuyu/journal-article-typesetting
 
 本项目负责文章排版规范化、版面和内容检查、恢复副本及回归验证。原有[word-to-indesign-toolkit](https://github.com/yunmuyu/word-to-indesign-toolkit)是独立的Word提取/导入工具，本项目复用其提取组件，不属于旧工具项目的后续版本。
 

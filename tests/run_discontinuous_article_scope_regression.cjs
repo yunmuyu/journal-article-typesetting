@@ -30,7 +30,7 @@ assert.equal(partition.scoped.length, 1);
 assert.equal(partition.outside.length, 1);
 // Actual empty-page gate: skipped pages must disappear, declared blank pages must not.
 let gate = fs.readFileSync(path.join(__dirname, '../2-导入_InDesign/journal_prepreview_gate.jsxinc'), 'utf8');
-gate = gate.replace('return {audit:audit}', 'return {audit:audit,auditEmptyRegions:auditEmptyRegions}');
+gate = gate.replace('return {audit:audit,', 'return {audit:audit,auditEmptyRegions:auditEmptyRegions,');
 vm.runInContext(gate, context);
 const ctx = {body:story, visibleBottom:()=>100};
 assert.equal(context.JournalPrepreviewGate.auditEmptyRegions(view, {}, ctx).filter(e=>e.code==='EMPTY_ARTICLE_PAGE').length, 0);

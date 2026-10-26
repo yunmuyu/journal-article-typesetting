@@ -174,13 +174,67 @@ var JournalPrepreviewGate = (function () {
         }
     }
 
+
+    function tableFigureInterruptions(fragments, figures) {
+        var errors=[];
+        for(var i=0;i<fragments.length;i++){
+            var table=fragments[i];
+            for(var j=1;j<table.parts.length;j++){
+                var before=table.parts[j-1],after=table.parts[j];
+                for(var k=0;k<figures.length;k++){
+                    var f=figures[k];
+                    if(f.position>before.end&&f.position<after.start)
+                        add(errors,'TABLE_INTERRUPTED_BY_FIGURE','table '+table.label+' between frames '+before.frameId+' and '+after.frameId+'; figure '+f.label);
+                }
+            }
+        }
+        return errors;
+    }
+    function auditTableContinuity(document,context,errors){
+        var frames=context.body.textContainers,fragments=[],figures=[],i,j,k;
+        function ownerIndex(frame){for(var n=0;n<frames.length;n++)if(frames[n].id===frame.id)return n;return -1;}
+        for(i=0;i<context.tables.length;i++){
+            var table=context.tables[i],byFrame={},parts=[];
+            for(j=0;j<table.cells.length;j++){
+                var lines=table.cells[j].texts[0].lines;
+                for(k=0;k<lines.length;k++){
+                    var owners=lines[k].insertionPoints[0].parentTextFrames;if(!owners.length)continue;
+                    var index=ownerIndex(owners[0]);if(index<0)continue;
+                    var pos=index*1000000+Number(lines[k].baseline),key=String(index);
+                    if(!byFrame[key]){byFrame[key]={frameId:owners[0].id,start:pos,end:pos};parts.push(byFrame[key]);}
+                    byFrame[key].start=Math.min(byFrame[key].start,pos);byFrame[key].end=Math.max(byFrame[key].end,pos);
+                }
+            }
+            parts.sort(function(a,b){return a.start-b.start;});
+            if(parts.length>1)fragments.push({label:table.label||table.id,parts:parts});
+        }
+        if(!fragments.length)return;
+        var graphics=document.allGraphics;
+        for(i=0;i<graphics.length;i++){
+            var item=graphics[i].parent,label=String(item.label),link='';
+            if(graphics[i].itemLink)link=String(graphics[i].itemLink.name);
+            if(/^source-formula-/.test(label)||/formula|公式/i.test(link))continue;
+            if(!/^source-figure-/.test(label)&&!/figure|图[0-9一二三四五六七八九十]/i.test(link))continue;
+            if(!item.parentPage)continue;
+            var bounds=item.geometricBounds,center=(bounds[1]+bounds[3])/2,y=(bounds[0]+bounds[2])/2,best=-1,distance=Infinity;
+            for(j=0;j<frames.length;j++){
+                if(!frames[j].parentPage||frames[j].parentPage.id!==item.parentPage.id)continue;
+                var b=frames[j].geometricBounds;if(center<b[1]-.1||center>b[3]+.1)continue;
+                var delta=y<b[0]?b[0]-y:y>b[2]?y-b[2]:0;
+                if(delta<distance){distance=delta;best=j;}
+            }
+            if(best>=0)figures.push({label:label||link,position:best*1000000+y});
+        }
+        var issues=tableFigureInterruptions(fragments,figures);for(i=0;i<issues.length;i++)errors.push(issues[i]);
+    }
     function audit(document, config, context) {
         var errors = [];
         auditTextMetrics(context, errors, config);
         var emptyErrors = auditEmptyRegions(document, config, context);for (var emptyIndex = 0; emptyIndex < emptyErrors.length; emptyIndex++) errors.push(emptyErrors[emptyIndex]);
         auditOverlaps(document, context, errors);
+        auditTableContinuity(document, context, errors);
         return errors;
     }
 
-    return {audit:audit};
+    return {audit:audit,tableFigureInterruptions:tableFigureInterruptions};
 }());

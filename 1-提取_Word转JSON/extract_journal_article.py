@@ -14,6 +14,7 @@ import zipfile
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from word_numbering import WordNumbering
 from docx_to_id_json import W, W_NS, M_NS, NS, attr, body_items, inline_items, paragraph_role, run_content, run_flags
 
 R = '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}'
@@ -102,6 +103,7 @@ def extract_article(source: Path, output: Path, body_start_text: str = '0 引言
         if 'word/document.xml' not in z.namelist() or '[Content_Types].xml' not in z.namelist():
             raise ValueError('SOURCE_NOT_WORD_DOCUMENT')
         root = ET.fromstring(z.read('word/document.xml'))
+        WordNumbering(z).materialize(root)
         body = root.find('w:body', NS)
         if body is None:
             raise ValueError('DOCUMENT_BODY_MISSING')

@@ -130,7 +130,8 @@ $exportIdmlJs=if($ExportIdml){'true'}else{'false'}
 $closeWhenDoneJs=if($CloseWhenDone){'true'}else{'false'}
 
 
-$script=$gateModule+$module+$bottomModule+$frontModule+@"
+$furnitureModule=[IO.File]::ReadAllText((Join-Path $PSScriptRoot 'journal_page_furniture.jsxinc'),[Text.Encoding]::UTF8)
+$script=$furnitureModule+$gateModule+$module+$bottomModule+$frontModule+@"
 
 
 
