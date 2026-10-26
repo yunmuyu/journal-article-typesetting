@@ -294,6 +294,35 @@ class PrepareJobTests(unittest.TestCase):
         self.assertEqual(audit['formulaCacheContract'], [{key: entry[key] for key in
                          ('number', 'cacheKey', 'sha256', 'sourceSha256', 'ruleVersion')}])
 
+    def test_table_kind_and_source_evidence_flow_into_job_and_audit(self):
+        self.supp['tables'] = [{'rows': [['标题'], ['数据']], 'cellRuns': [[[]], [[]]]}]
+        evidence = {'styleId': 'TableGrid', 'borders': {'top': {'val': 'single', 'sz': '4'}}}
+        self.structures['tables'] = [{'widths': [1000], 'headerRows': 1,
+            'rows': [[{'start': 0, 'span': 1}], [{'start': 0, 'span': 1}]],
+            'sourceFormatting': evidence}]
+        self.report['tableCount'] = 1
+        self.blocks.append({'role': 'table_gap', 'text': '   ', 'runs': [], 'tableNumber': 1})
+        self.refresh()
+        kinds = self.root / 'table-kinds.json'
+        module.write(kinds, {'1': {'kind': 'ordinary', 'reviewEvidence': 'verified source border grid'}})
+        job = module.read(self.build(table_kinds=kinds)['job'])
+        audit = module.read(job['auditConfigPath'])
+        self.assertEqual(job['tables'][0]['kind'], 'ordinary')
+        self.assertEqual(job['tables'][0]['sourceEvidence'], evidence)
+        self.assertEqual(audit['tableKinds'], [{'number': 1, 'kind': 'ordinary',
+            'reviewEvidence': 'verified source border grid', 'sourceEvidence': evidence}])
+
+    def test_unclassified_table_is_preserved_as_unclassified(self):
+        self.supp['tables'] = [{'rows': [['标题'], ['数据']], 'cellRuns': [[[]], [[]]]}]
+        self.structures['tables'] = [{'widths': [1000], 'headerRows': 1,
+            'rows': [[{'start': 0, 'span': 1}], [{'start': 0, 'span': 1}]]}]
+        self.report['tableCount'] = 1
+        self.blocks.append({'role': 'table_gap', 'text': '   ', 'runs': [], 'tableNumber': 1})
+        self.refresh()
+        job = module.read(self.build()['job'])
+        self.assertEqual(job['tables'][0]['kind'], 'unclassified')
+        self.assertEqual(module.read(job['auditConfigPath'])['tableKinds'][0]['kind'], 'unclassified')
+
     def test_tables_require_explicit_header_rows(self):
         self.report['tableCount'] = 1
         self.supp['tables'] = [{'rows': [['标题'], ['数据']]}]

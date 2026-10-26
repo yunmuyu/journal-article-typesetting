@@ -32,6 +32,22 @@ var JournalFrontmatter = (function () {
         return {leading:Number(style.leading), spaceBefore:Number(style.spaceBefore), spaceAfter:Number(style.spaceAfter)};
     }
 
+    function affiliationBoundary(text) {
+        var match=String(text).match(/;[ \t\n]*2[.．]\s*/);
+        if(!match||!/^\s*\(?1[.．]/.test(String(text)))return null;
+        return {start:match.index+1,length:match[0].indexOf('2')-1};
+    }
+    function separateAffiliations(p) {
+        var boundary=affiliationBoundary(p.contents);
+        if(!boundary)return false;
+        var separator=String(p.contents).substr(boundary.start,boundary.length);
+        if(separator!=='\n'){
+            if(boundary.length)p.characters.itemByRange(boundary.start,boundary.start+boundary.length-1).contents='\n';
+            else p.insertionPoints[boundary.start].contents='\n';
+        }
+        p.tracking=0;p.horizontalScale=100;
+        return true;
+    }
     function planEnglishTitle(lineCount, config) {
         lineCount = Math.max(1, Math.floor(number(lineCount, "englishTitle.lineCount")));
         config = config || {};
@@ -273,6 +289,7 @@ var JournalFrontmatter = (function () {
         }
         for (i = 0; i < entries.length; i++) if (entries[i].role === "enAffiliation") {
             var unit = frame.parentStory.paragraphs[i], unitStyle = unit.appliedParagraphStyle;
+            separateAffiliations(unit);
             unit.properties = englishStyleContract("enAffiliation", unitStyle);
             for (var ui = 0; ui + 1 < unit.lines.length; ui++) unit.lines[ui].characters.everyItem().leading = 15;
             unit.spaceBefore = unitStyle.spaceBefore;
@@ -381,6 +398,7 @@ var JournalFrontmatter = (function () {
     }
 
     return {
+        affiliationBoundary: affiliationBoundary, separateAffiliations: separateAffiliations,
         refitExistingFront: refitExistingFront,
         classificationPlan: classificationPlan,
         normalizeClassification: normalizeClassification,

@@ -39,7 +39,7 @@ function fixture(spec) {
     document: {
       recompose() {},
       pages: [page], spreads: [{ pages: [page] }],
-      stories: [story('body'), story('front'), {...story('footer'), textContainers:[{parentPage:page,lines:[{baseline:100}]}]}],
+      stories: [story('body'), {...story('front'), textContainers:[{parentPage:page,lines:[{baseline:50}]}]}, {...story('footer'), textContainers:[{parentPage:page,lines:[{baseline:100}]}]}],
       allGraphics: graphics, allPageItems: [], allParagraphStyles: [],
       compositeFonts: { itemByName: () => ({ isValid: false }) }
     },
@@ -50,6 +50,15 @@ function fixture(spec) {
     }
   };
 }
+
+test('panel fixture supplies the front frame required by the full audit', () => {
+  const input = fixture(layouts[0]);
+  const front = input.document.stories.find(story => story.extractLabel() === 'front');
+  assert.equal(front.textContainers[0].parentPage, input.document.pages[0]);
+  const result = layout.audit(input.document, input.config);
+  assert.ok(Array.from(result.errors).some(error => error.code === 'GUIDE_COUNT'),
+    'unrelated audit checks remain active');
+});
 
 function figureErrors(input) {
   // Empty story fixtures isolate figure geometry; font/guide/preview checks stay active.

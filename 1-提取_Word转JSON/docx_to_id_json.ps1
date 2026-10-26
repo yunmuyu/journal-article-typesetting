@@ -89,6 +89,13 @@ try {
     } finally { $zip.Dispose() }
 } finally { $inputStream.Dispose() }
 
+. (Join-Path $PSScriptRoot 'WordNumbering.ps1')
+$numberingXml='';$numberingStylesXml=''
+$numberStream=[IO.File]::OpenRead($DocxPath)
+try{$numberZip=New-Object IO.Compression.ZipArchive($numberStream,[IO.Compression.ZipArchiveMode]::Read)
+ try{$numberEntry=$numberZip.GetEntry('word/numbering.xml');if($numberEntry){$nr=New-Object IO.StreamReader($numberEntry.Open());try{$numberingXml=$nr.ReadToEnd()}finally{$nr.Dispose()}}$styleEntry=$numberZip.GetEntry('word/styles.xml');if($styleEntry){$sr=New-Object IO.StreamReader($styleEntry.Open());try{$numberingStylesXml=$sr.ReadToEnd()}finally{$sr.Dispose()}}}finally{$numberZip.Dispose()}
+}finally{$numberStream.Dispose()}
+Initialize-WordNumbering $numberingXml $numberingStylesXml
 $xdoc = New-Object System.Xml.XmlDocument
 $xdoc.LoadXml($rawXml)
 $W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -214,6 +221,8 @@ foreach ($child in $body.SelectNodes(".//w:p[not(ancestor::w:tbl) and not(ancest
     }
     $text = -join $textParts
     $text = $text.Replace([string][char]0xFF0B, "+")   # 全角＋ → 半角+（不改字体）
+    $numberPrefix=Get-WordNumberPrefix $child $ns
+    if($numberPrefix){foreach($run in $runs){$run.start+=$numberPrefix.Length;$run.end+=$numberPrefix.Length};$text=$numberPrefix+$text}
     $isOle = (Test-HasOle $child)
     $seq++
 

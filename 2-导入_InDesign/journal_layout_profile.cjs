@@ -28,7 +28,7 @@ function fromApproved(snapshot, job, blocks) {
         throw Error(`PROFILE_TABLE_ROW ${spec.number}/${row}`);
       const height = heights[0];
       // A multiline row keeps natural growth; only approved single-line geometry is a minimum.
-      minimumHeightsMm.push(height >= 4.8 - .001 && height <= 5.5 + .001 ? height : 5);
+      minimumHeightsMm.push(height >= 4.6 - .001 && height <= 5.5 + .001 ? height : 5);
     }
     profile.tables.push({number: spec.number, widthsMm: table.widths, minimumHeightsMm});
   }

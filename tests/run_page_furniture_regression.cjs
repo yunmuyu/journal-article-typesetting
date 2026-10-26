@@ -1,0 +1,12 @@
+const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
+const ctx={};vm.createContext(ctx);vm.runInContext(fs.readFileSync('2-导入_InDesign/journal_page_furniture.jsxinc','utf8'),ctx);
+let id=0;const frame=()=>({id:++id,constructor:{name:'TextFrame'},contents:'2026.09',itemLayer:{visible:true},overflows:false,duplicate(p){const f=frame();p.allPageItems.push(f);return f;}});
+const left={side:0,allPageItems:[frame()],masterPageItems:[]},right={side:1,allPageItems:[],masterPageItems:[]};
+const p={name:'267',side:1,allPageItems:[],masterPageItems:[],appliedMaster:{isValid:true,name:'merge0'}};
+const d={masterSpreads:[{pages:[left,right]}],pages:[p]};
+assert.equal(ctx.JournalPageFurniture.audit(d,{}).length,1,'opposite-side master text cannot satisfy current page');
+const approved={side:1,allPageItems:[frame()],masterPageItems:[]};ctx.JournalPageFurniture.repairMissingDate(right,approved);p.masterPageItems=right.allPageItems;
+assert.equal(ctx.JournalPageFurniture.audit(d,{}).length,0);
+p.masterPageItems[0].overflows=true;assert.equal(ctx.JournalPageFurniture.audit(d,{}).length,1);
+assert.throws(()=>ctx.JournalPageFurniture.repairMissingDate(right,left),/SIDE_MISMATCH/);
+console.log('PASS per-page date presence, same-side repair, overflow detection');

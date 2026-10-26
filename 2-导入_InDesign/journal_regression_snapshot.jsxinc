@@ -69,9 +69,10 @@ var JournalRegressionSnapshot = (function () {
             verticalJustification:Number(f.textFramePreferences.verticalJustification), label:String(f.label)};
     }
     function table(t, unavailable, location) {
-        var result = {label:String(t.label),rows:t.rows.length,columns:t.columns.length,
-            headerRowCount:t.headerRowCount,footerRowCount:t.footerRowCount,widths:[],cells:[]};
-        for (var i = 0; i < t.columns.length; i++) result.widths.push(Number(t.columns[i].width));
+        var result = {label:String(t.label),kind:t.extractLabel?String(t.extractLabel("journal-table-kind")||"unclassified"):"unclassified",rows:t.rows.length,columns:t.columns.length,
+            headerRowCount:t.headerRowCount,footerRowCount:t.footerRowCount,widths:[],rowMetrics:[],cells:[]};
+        for (var i = 0; i < t.columns.length; i++) result.widths.push(primitive(t.columns[i].width));
+        for (i = 0; i < t.rows.length; i++) result.rowMetrics.push({height:primitive(t.rows[i].height),minimumHeight:primitive(t.rows[i].minimumHeight),autoGrow:primitive(t.rows[i].autoGrow)});
         for (i = 0; i < t.cells.length; i++) {
             var c = t.cells[i], cell = {row:c.parentRow.index,column:c.parentColumn.index,
                 rowSpan:c.rowSpan,columnSpan:c.columnSpan,text:String(c.contents),overflows:c.overflows,

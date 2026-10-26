@@ -13,6 +13,8 @@ Current workflow:
 """
 from __future__ import annotations
 
+from word_numbering import WordNumbering
+
 import argparse
 import json
 import re
@@ -164,6 +166,8 @@ def paragraph_role(text: str, seq_index: int) -> str:
 def convert_docx(docx_path: Path) -> Dict[str, object]:
     with zipfile.ZipFile(docx_path) as zf:
         document_xml = ET.fromstring(zf.read("word/document.xml"))
+        numbering = WordNumbering(zf)
+        numbering.materialize(document_xml)
     body = document_xml.find("w:body", NS)
     if body is None:
         raise RuntimeError("word/document.xml has no body")
