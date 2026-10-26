@@ -139,6 +139,39 @@ function compare(baseline, candidate, quality, definitionEvidence = [], qualityC
     for (const field of ['rows', 'columns', 'headerRowCount', 'footerRowCount']) if (!same(a[field], b[field])) fail('TABLE_STRUCTURE', b.location, field, a[field], b[field]);
     const cells = t => t.cells.map(c => [c.row, c.column, c.rowSpan, c.columnSpan]);
     if (!same(cells(a), cells(b))) fail('TABLE_MERGE', b.location, 'cells', cells(a), cells(b));
+    if ((a.kind || b.kind) && a.kind !== b.kind) fail('TABLE_KIND', b.location, 'kind', a.kind, b.kind);
+    if (a.widths || b.widths) {
+      const validWidths = widths => Array.isArray(widths) && widths.length === b.columns &&
+        widths.every(width => typeof width === 'number' && Number.isFinite(width) && width > 0);
+      if (!validWidths(b.widths)) fail('TABLE_WIDTH_INVALID', b.location, 'widths', 'positive finite widths', b.widths);
+      else if (validWidths(a.widths)) {
+        const total = widths => widths.reduce((sum, width) => sum + width, 0);
+        if (Math.abs(total(a.widths) - total(b.widths)) > 0.02)
+          fail('TABLE_TOTAL_WIDTH', b.location, 'widths', total(a.widths), total(b.widths));
+        else if (!same(a.widths, b.widths)) variations.push({ location: b.location, fields: ['widths'], requiresQualityGate: true });
+      }
+    }
+    if (a.rowMetrics || b.rowMetrics) {
+      if (!Array.isArray(b.rowMetrics) || b.rowMetrics.length !== b.rows)
+        fail('TABLE_ROW_METRICS', b.location, 'rowMetrics', b.rows, b.rowMetrics);
+      else for (let row = 0; row < b.rowMetrics.length; row++) {
+        const actual = b.rowMetrics[row], expected = a.rowMetrics?.[row];
+        const rowLocation = b.location + '/row/' + row;
+        if (typeof actual?.minimumHeight !== 'number' || !Number.isFinite(actual.minimumHeight) ||
+            (b.kind === 'ordinary' ? actual.minimumHeight < 4.6 - 0.001 || actual.minimumHeight > 5.5 + 0.001 :
+              expected && !same(actual.minimumHeight, expected.minimumHeight)))
+          fail('TABLE_MINIMUM_HEIGHT', rowLocation, 'minimumHeight', b.kind === 'ordinary' ? [4.6, 5.5] : expected?.minimumHeight, actual?.minimumHeight);
+        if (typeof actual?.autoGrow !== 'boolean' ||
+            (b.kind === 'ordinary' ? actual.autoGrow !== true : expected && actual.autoGrow !== expected.autoGrow))
+          fail('TABLE_AUTO_GROW', rowLocation, 'autoGrow', b.kind === 'ordinary' ? true : expected?.autoGrow, actual?.autoGrow);
+        if (typeof actual?.height !== 'number' || !Number.isFinite(actual.height) || actual.height <= 0 ||
+            typeof actual.minimumHeight === 'number' && actual.height < actual.minimumHeight - 0.02)
+          fail('TABLE_ROW_HEIGHT', rowLocation, 'height', 'finite height >= minimumHeight', actual?.height);
+        else if (expected && !same(actual.height, expected.height))
+          variations.push({ location: rowLocation, fields: ['height'], requiresQualityGate: true });
+      }
+    }
+
     for (const cell of a.cells) {
       const other = b.cells.find(c => c.row === cell.row && c.column === cell.column);
       if (!other) continue;
@@ -146,6 +179,16 @@ function compare(baseline, candidate, quality, definitionEvidence = [], qualityC
       const location = `${b.location}/cell/${cell.row},${cell.column}`;
       if (key(cell.text) !== key(other.text)) fail('TABLE_CONTENT', location, 'text', cell.text, other.text);
       if (other.overflows) fail('CELL_OVERSET', location, 'overflows', false, true);
+      const nativeFields = ['topInset', 'bottomInset', 'leftInset', 'rightInset',
+        'verticalJustification', 'topEdgeStrokeWeight', 'bottomEdgeStrokeWeight',
+        'leftEdgeStrokeWeight', 'rightEdgeStrokeWeight'];
+      if (cell.properties || other.properties) for (const field of nativeFields) {
+        const value = other.properties?.[field], reference = cell.properties?.[field];
+        if (value === null || value === undefined || typeof value === 'number' && !Number.isFinite(value) ||
+            reference !== undefined && !same(reference, value))
+          fail('TABLE_CELL_FORMAT', location, field, reference, value);
+      }
+
       if (cell.paragraphs.length !== other.paragraphs.length) fail('TABLE_PARAGRAPHS', location, 'count', cell.paragraphs.length, other.paragraphs.length);
       for (let p = 0; p < Math.min(cell.paragraphs.length, other.paragraphs.length); p++) compareParagraph(cell.paragraphs[p], other.paragraphs[p], location + '/p/' + p, true);
     }

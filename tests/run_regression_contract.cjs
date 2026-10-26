@@ -50,4 +50,53 @@ base.stories[0].tables = [tb];
 c = clone(base);
 c.stories[0].tables[0].cells[0].rowSpan = 1;
 assert(check(c).failures.some(x => x.code === 'TABLE_MERGE'));
+
+// Native table properties are a contract independent of naturally changing row height.
+const native = clone(base);
+const sourceTable = native.stories[0].tables[0];
+sourceTable.kind = 'ordinary';
+sourceTable.widths = [42.75, 42.75];
+sourceTable.rowMetrics = [{height: 5, minimumHeight: 5, autoGrow: true},
+  {height: 5, minimumHeight: 5, autoGrow: true}];
+sourceTable.cells[0].properties = {
+  topInset: .5, bottomInset: .5, leftInset: .5, rightInset: .5,
+  verticalJustification: 'center', topEdgeStrokeWeight: .5,
+  bottomEdgeStrokeWeight: .5, leftEdgeStrokeWeight: .5, rightEdgeStrokeWeight: .5
+};
+sourceTable.cells[0].paragraphs[0].properties.justification = 'center';
+sourceTable.cells[0].paragraphs[0].ranges[0].leading = 12;
+const verifyTable = change => { const candidate = clone(native); change(candidate.stories[0].tables[0]);
+  return compare(native, candidate, {passed: true}); };
+for (const field of Object.keys(sourceTable.cells[0].properties)) {
+  const result = verifyTable(table => { table.cells[0].properties[field] = 9; });
+  assert(result.failures.some(x => x.code === 'TABLE_CELL_FORMAT' && x.field === field), field);
+}
+assert(verifyTable(table => { table.cells[0].paragraphs[0].properties.justification = 'left'; })
+  .failures.some(x => x.code === 'PARAGRAPH_FORMAT' && x.field === 'justification'));
+assert(verifyTable(table => { table.rowMetrics[0].minimumHeight = 1.058; })
+  .failures.some(x => x.code === 'TABLE_MINIMUM_HEIGHT'));
+assert(verifyTable(table => { table.rowMetrics[0].autoGrow = false; })
+  .failures.some(x => x.code === 'TABLE_AUTO_GROW'));
+assert(verifyTable(table => { table.rowMetrics[0].minimumHeight = null; })
+  .failures.some(x => x.code === 'TABLE_MINIMUM_HEIGHT'));
+assert(verifyTable(table => { table.widths = [0, 85.5]; })
+  .failures.some(x => x.code === 'TABLE_WIDTH_INVALID'));
+assert(verifyTable(table => { table.widths = [50, 50]; })
+  .failures.some(x => x.code === 'TABLE_TOTAL_WIDTH'));
+let permitted = verifyTable(table => { table.widths = [40, 45.5]; table.rowMetrics[0].height = 7; });
+assert.equal(permitted.passed, true, JSON.stringify(permitted.failures));
+assert(permitted.compliantVariationCandidates.some(x => x.fields.includes('widths')));
+permitted = verifyTable(table => { table.rowMetrics[0].height = 7; table.rowMetrics[0].minimumHeight = 5; });
+assert.equal(permitted.passed, true, JSON.stringify(permitted.failures));
+const algorithmReference = clone(native);
+const algorithmTable = algorithmReference.stories[0].tables[0];
+algorithmTable.kind = 'algorithm';
+algorithmTable.cells[0].paragraphs[0].properties.justification = 'left';
+algorithmTable.rowMetrics[1].height = 84.608;
+const algorithmCandidate = clone(algorithmReference);
+algorithmCandidate.stories[0].tables[0].rowMetrics[1].height = 90;
+assert.equal(compare(algorithmReference, algorithmCandidate, {passed:true}).passed, true,
+  'algorithm body left alignment and natural multi-line height are preserved');
+algorithmCandidate.stories[0].tables[0].cells[0].properties.leftInset = 9;
+assert(compare(algorithmReference, algorithmCandidate).failures.some(x=>x.code==='TABLE_CELL_FORMAT'));
 console.log('PASS three-tier regression contract');

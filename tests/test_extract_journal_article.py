@@ -110,6 +110,20 @@ class ExtractTests(unittest.TestCase):
         self.assertEqual(table['rows'][0][0], 'x2')
         self.assertEqual(table['cellRuns'][0][0], [{'start': 0, 'end': 1, 'italic': True}, {'start': 1, 'end': 2, 'position': 'subscript'}])
 
+    def test_table_source_border_and_style_evidence_is_preserved_without_classifying(self):
+        table = '''<w:tbl><w:tblPr><w:tblStyle w:val="JournalRules"/><w:tblBorders>
+        <w:top w:val="single" w:sz="4"/><w:bottom w:val="single" w:sz="4"/>
+        <w:insideH w:val="single" w:sz="4"/></w:tblBorders></w:tblPr>
+        <w:tblGrid><w:gridCol w:w="1000"/></w:tblGrid><w:tr><w:tc>
+        <w:tcPr><w:tcBorders><w:left w:val="nil"/></w:tcBorders></w:tcPr>
+        <w:p><w:r><w:t>x</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'''
+        _, out = self.extract(para('0 引言') + table)
+        source = self.read(out, 'table-structure.json')['tables'][0]
+        self.assertEqual(source['sourceFormatting']['styleId'], 'JournalRules')
+        self.assertEqual(source['sourceFormatting']['borders']['insideH'], {'val': 'single', 'sz': '4'})
+        self.assertEqual(source['rows'][0][0]['borders']['left'], {'val': 'nil', 'sz': None})
+        self.assertNotIn('kind', source)
+
     def test_omml_blocks_readiness_without_discarding_source(self):
         result, out = self.extract(para('0 引言') + '<w:p><w:r><w:t>公式</w:t></w:r><m:oMath><m:r><m:t>x</m:t></m:r></m:oMath></w:p>')
         self.assertEqual(result['status'], 'blocked')
