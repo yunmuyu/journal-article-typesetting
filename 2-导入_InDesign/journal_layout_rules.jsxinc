@@ -132,8 +132,11 @@ var JournalLayout = (function () {
     }
 
     function tableKind(table,config,index){
-        var entry=config&&config.tableKinds&&config.tableKinds[index],number=Number(String(table.label).replace('source-table-',''));
-        if(!entry||entry.number!==undefined&&entry.number!==number||
+        if(!config||!config.tableKinds)return null;
+        var entry=config.tableKinds[index];
+        if(!entry)return null;
+        var number=Number(String(table.label).replace('source-table-',''));
+        if(entry.number!==undefined&&entry.number!==number||
            entry.kind!=='ordinary'&&entry.kind!=='algorithm'&&entry.kind!=='three-line')return null;
         return entry.kind;
     }

@@ -22,6 +22,8 @@ check(Math.abs(t.rows[1].minimumHeight-4.7)<.02,'approved minimum lost');
 r.nativeIssues=JournalLayout.tableNativeIssues(t);r.height=t.rows[1].height;check(r.nativeIssues.length===0,'restored native format failed');
 t.cells[2].leftInset=1;check(JournalLayout.tableNativeIssues(t).length>0,'bad inset accepted');JournalLayout.normalizeOrdinaryTables([t],config);
 var before=t.cells[2].leftInset;try{JournalLayout.normalizeOrdinaryTables([t],{tableKinds:[{kind:'unclassified'}]});throw Error('unclassified accepted');}catch(e){check(String(e).indexOf('TABLE_KIND_REQUIRED')>=0,'wrong gate');}
+var missingConfigs=[{}, {tableKinds:[]}];for(var mi=0;mi<missingConfigs.length;mi++){try{JournalLayout.normalizeOrdinaryTables([t],missingConfigs[mi]);throw Error('missing kind accepted');}catch(e){check(String(e).indexOf('TABLE_KIND_REQUIRED')>=0,'missing kind should report gate: '+e);}}
+r.missingKindsBlocked=true;
 check(t.cells[2].leftInset===before,'gate mutated table');
 t.cells[2].contents='1.2';t.cells[4].contents='12';d.recompose();
 var issues=JournalLayout.tableNativeIssues(t),mixed=false;for(var i=0;i<issues.length;i++)if(issues[i].code==='TABLE_DECIMAL_INTEGER_REVIEW')mixed=true;
