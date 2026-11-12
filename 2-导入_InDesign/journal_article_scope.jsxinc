@@ -1,0 +1,47 @@
+/* InDesign 2020 / ES3. Resolve article identities without changing the document. */
+var JournalArticleScope = (function () {
+    function fail(code, detail) { throw Error(code + (detail === undefined ? "" : " " + detail)); }
+    function valid(item) { return item && item.isValid !== false; }
+    function resolve(document, spec) {
+        if (!spec || typeof spec.articleId !== "string" || !spec.articleId.length) fail("ARTICLE_ID_REQUIRED");
+        if (document.id !== spec.documentId) fail("ARTICLE_DOCUMENT_CHANGED");
+        if (!spec.pageIds || !spec.pageIds.length) fail("ARTICLE_PAGES_REQUIRED");
+        var pages = [], selected = {}, seen = {}, stories = [], roles = {}, slots = {}, i, j, last = -1;
+        for (i = 0; i < spec.pageIds.length; i++) {
+            var page = document.pages.itemByID(spec.pageIds[i]);
+            if (!valid(page)) fail("ARTICLE_PAGE_MISSING", spec.pageIds[i]);
+            if (page.documentOffset <= last) fail("ARTICLE_PAGE_ORDER");
+            if (last >= 0 && page.documentOffset !== last + 1) fail("ARTICLE_PAGE_GAP");
+            last = page.documentOffset; selected[page.id] = true; pages.push(page);
+        }
+        if (spec.startOnLeft !== false && pages[0].side !== PageSideOptions.LEFT_HAND) fail("ARTICLE_START_SIDE");
+        if (!spec.bindings || !spec.bindings.length) fail("ARTICLE_BINDINGS_REQUIRED");
+        for (i = 0; i < spec.bindings.length; i++) {
+            var binding = spec.bindings[i], story = document.stories.itemByID(binding.id);
+            if (!valid(story)) fail("ARTICLE_STORY_MISSING", binding.id);
+            if (seen[story.id]) fail("ARTICLE_STORY_DUPLICATE", story.id);
+            if (!binding.role || roles[binding.role]) fail("ARTICLE_ROLE_DUPLICATE_OR_EMPTY", binding.role);
+            if (!story.textContainers.length) fail("ARTICLE_STORY_UNPLACED", story.id);
+            for (j = 0; j < story.textContainers.length; j++) {
+                var parentPage = story.textContainers[j].parentPage;
+                if (!parentPage || !selected[parentPage.id]) fail("ARTICLE_STORY_OUTSIDE_SCOPE", story.id);
+            }
+            seen[story.id] = true; roles[binding.role] = story; stories.push(story);
+        }
+        if (!roles.body) fail("ARTICLE_BODY_REQUIRED");
+        var items = document.allPageItems, byId = {}, usedSlots = {};
+        for (i = 0; i < items.length; i++) byId[items[i].id] = items[i];
+        if (spec.slots) for (var name in spec.slots) if (spec.slots.hasOwnProperty(name)) {
+            var item = byId[spec.slots[name]];
+            if (!valid(item)) fail("ARTICLE_SLOT_MISSING", name);
+            if (!item.parentPage || !selected[item.parentPage.id]) fail("ARTICLE_SLOT_OUTSIDE_SCOPE", name);
+            if (usedSlots[item.id]) fail("ARTICLE_SLOT_DUPLICATE", name);
+            if (item.parentStory && !seen[item.parentStory.id]) fail("ARTICLE_SLOT_STORY_UNBOUND", name);
+            usedSlots[item.id] = true; slots[name] = item;
+        }
+        if (slots["body-left"] && slots["body-left"].parentStory.id !== roles.body.id) fail("ARTICLE_BODY_SLOT_MISMATCH");
+        if (slots["body-right"] && slots["body-right"].parentStory.id !== roles.body.id) fail("ARTICLE_BODY_SLOT_MISMATCH");
+        return {articleId:spec.articleId, documentId:document.id, pages:pages, stories:stories, roles:roles, body:roles.body, slots:slots};
+    }
+    return {resolve:resolve};
+}());

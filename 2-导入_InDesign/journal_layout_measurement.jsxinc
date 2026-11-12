@@ -2,7 +2,7 @@
 var JournalLayoutMeasurement=(function(){
     function owner(line){var fs=line.insertionPoints[0].parentTextFrames;return fs.length?fs[0].id:null;}
     function role(p){
-        var n=String(p.appliedParagraphStyle.name),s=String(p.contents);
+        var n=String(p.appliedParagraphStyle.name).replace(/^journal-[^:]+::/,""),s=String(p.contents);
         if(/^作者简介/.test(s))return "bio";
         if(n==="正文"||n==="正文_wrd_1"||n.indexOf("期刊正文_")===0)return "body";
         if(n==="一级标题")return "h1";
@@ -70,6 +70,42 @@ var JournalLayoutMeasurement=(function(){
                 leadingDownMm:down*25.4/72,leadingUpMm:up*25.4/72});
         }
         return out;
+    }
+    function captureNativeBands(body,pageIndices){
+        var frames=body.textContainers,out=[],selected={};
+        if(!pageIndices||!pageIndices.length)throw Error("NATIVE_BAND_PAGES_REQUIRED");
+        for(var i=0;i<pageIndices.length;i++)selected[pageIndices[i]]=true;
+        function column(lines){
+            if(!lines.length)return null;
+            var first=lines[0],last=lines[lines.length-1],ranges=[],min=0,max=0;
+            for(var j=1;j<lines.length;j++){
+                var l=lines[j],p=l.paragraphs[0];
+                if(role(p)!=="body"||p.tables.length||/\uFFFC/.test(String(l.contents)))continue;
+                var styles=l.textStyleRanges.everyItem().getElements(),leading=Number(l.characters[-1].leading);
+                if(!isFinite(leading)||leading<14.8||leading>16)continue;
+                var uniform=true;
+                for(var k=0;k<styles.length;k++)if(Number(styles[k].leading)!==leading)uniform=false;
+                if(!uniform)continue;
+                ranges.push({start:l.characters[0].index,end:l.characters[-1].index,currentPt:leading,minPt:14.8,maxPt:16});
+                min+=14.8-leading;
+                max+=16-leading;
+            }
+            return {start:first.insertionPoints[0].index,end:last.insertionPoints[-1].index,
+                lineCount:lines.length,bottomMm:Number(last.baseline),
+                estimatedLocalMinPt:min,estimatedLocalMaxPt:max,leadingRanges:ranges};
+        }
+        for(var i=0;i<frames.length;i++){
+            var f=frames[i],page=f.parentPage;
+            if(!page||!selected[page.documentOffset]||f.textFramePreferences.textColumnCount!==2)continue;
+            var shape=JournalLayout.nativeFlowBands(f),bands=[];
+            for(var j=0;j<shape.bands.length;j++){
+                var band=shape.bands[j];
+                bands.push({index:j,endsAtSpan:band.cut,left:column(band.left),right:column(band.right)});
+            }
+            out.push({frameId:f.id,pageIndex:page.documentOffset,pageName:String(page.name),signature:shape.signature,
+                targetBottomMm:Number(f.geometricBounds[2])-JournalLayout.rules.bottomInset,bands:bands});
+        }
+        return {storyId:body.id,overflows:body.overflows,frames:out};
     }
     function capture(d,config){
         var body=null,i,j,k;
@@ -268,5 +304,5 @@ var JournalLayoutMeasurement=(function(){
         }
         return out;
     }
-    return {adjustableLeading:adjustableLeading,frameState:frameState,paragraphRole:role,capture:capture,lineRecord:lineRecord,probeTracking:probeTracking,trackingContext:trackingContext,flowSignature:flowSignature};
+    return {adjustableLeading:adjustableLeading,frameState:frameState,paragraphRole:role,capture:capture,captureNativeBands:captureNativeBands,lineRecord:lineRecord,probeTracking:probeTracking,trackingContext:trackingContext,flowSignature:flowSignature};
 }());

@@ -9,4 +9,9 @@ const approved={side:1,allPageItems:[frame()],masterPageItems:[]};ctx.JournalPag
 assert.equal(ctx.JournalPageFurniture.audit(d,{}).length,0);
 p.masterPageItems[0].overflows=true;assert.equal(ctx.JournalPageFurniture.audit(d,{}).length,1);
 assert.throws(()=>ctx.JournalPageFurniture.repairMissingDate(right,left),/SIDE_MISMATCH/);
+const child=frame(),group={id:++id,constructor:{name:'Group'},allPageItems:[child],itemLayer:{visible:true}};
+child.parent=group;p.masterPageItems=[group];
+assert.equal(ctx.JournalPageFurniture.audit(d,{}).length,0,'date text in the applied right-side master group is visible');
+group.nonprinting=true;
+assert.equal(ctx.JournalPageFurniture.audit({...d,articleScoped:true},{articlePageRange:[6,13]}).length,1,'scoped page remains checked and a hidden group cannot pass');
 console.log('PASS per-page date presence, same-side repair, overflow detection');

@@ -73,12 +73,29 @@ const context = {
 };
 
 const errors = JournalPrepreviewGate.audit(document, {}, context);
+const structural = JournalPrepreviewGate.auditGeometry(document, {}, context).map(error => error.code);
+for (const expected of ['GEOMETRY_OVERLAP', 'TRAILING_BLANK_PAGE', 'LARGE_EMPTY_REGION']) {
+    if (!structural.includes(expected)) throw new Error('native candidate gate missed '+expected);
+}
+if (structural.includes('BODY_METRIC')) throw new Error('candidate gate must defer the font and leading audit');
 const codes = errors.map(error => error.code);
 for (const expected of ['TEXT_METRIC_INVALID', 'BODY_METRIC', 'TABLE_STYLE_POLLUTION', 'GEOMETRY_OVERLAP', 'TRAILING_BLANK_PAGE', 'LARGE_EMPTY_REGION']) {
     if (!codes.includes(expected)) throw new Error(`missing ${expected}: ${JSON.stringify(errors)}`);
 }
 if (codes.includes('TABLE_RESERVATION')) throw new Error(`inline table host marker was treated as text: ${JSON.stringify(errors)}`);
 if (!errors.some(error => /page 1/.test(error.detail))) throw new Error('paragraph/page location is absent');
+global.PageSideOptions = {RIGHT_HAND: 'right', LEFT_HAND: 'left'};
+pages[2].side = PageSideOptions.RIGHT_HAND;
+pages[2].allPageItems = [];
+const paddingConfig = {trailingLeftStartPaddingPageId: 3};
+const scopedPadding = {...document, articleScoped: true};
+if (JournalPrepreviewGate.audit(scopedPadding,paddingConfig,context).some(error => error.code==='TRAILING_BLANK_PAGE')) {
+    throw new Error('explicit empty right padding page was treated as accidental trailing whitespace');
+}
+pages[2].allPageItems = [{id: 99}];
+if (!JournalPrepreviewGate.audit(scopedPadding,paddingConfig,context).some(error => error.code==='INVALID_LEFT_START_PADDING')) {
+    throw new Error('a page with its own object must not pass as empty padding');
+}
 
 const isolatedPages = [
     {id: undefined, documentOffset: 0, name: '10', isValid: true},
@@ -103,3 +120,16 @@ const isolatedContext = {
 const isolatedErrors = JournalPrepreviewGate.audit({pages: isolatedPages, allPageItems: collection([])}, {maxUnexplainedBlankMm:100}, isolatedContext);
 if (isolatedErrors.some(error => error.code === 'GEOMETRY_OVERLAP')) throw new Error(`cross-page overlap false positive: ${JSON.stringify(isolatedErrors)}`);
 console.log('PASS pre-preview gate reports numeric, overlap, blank-page and empty-region failures with location');
+
+const anchoredFormula = {id: 91, label: 'source-formula-91', parentPage: pages[0], geometricBounds: [18, 12, 22, 16]};
+tableLine.contents += String.fromCharCode(65532);
+tableLine.allPageItems = [anchoredFormula];
+document.allPageItems.push(anchoredFormula);
+const anchorIssues = JournalPrepreviewGate.auditGeometry(document, {}, context).filter(error => error.code === 'GEOMETRY_OVERLAP');
+if (anchorIssues.some(error => /table 0 cell 0 line 0 overlaps .*source-formula-91/.test(error.detail))) {
+    throw new Error('an inline formula occupied its own table line');
+}
+if (!anchorIssues.some(error => /story 7 paragraph 1 line 0 overlaps .*source-formula-91/.test(error.detail))) {
+    throw new Error('a separate overlapping body line still needs to be reported');
+}
+console.log('PASS table formula self-geometry is ignored while neighboring overlap remains');

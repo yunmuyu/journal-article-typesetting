@@ -24,6 +24,11 @@
         kerningMethods: ["$ID/Metrics Roman only", "原始设定 - 仅罗马字"]            // 字偶间距：原始设定 - 仅罗马字
     };
     if (typeof JournalImportRequest !== "undefined") {
+        if (JournalImportRequest.articleScope !== undefined) {
+            if (typeof JournalArticleScope === "undefined") throw Error("ARTICLE_SCOPE_MODULE_REQUIRED");
+            var articleContext = JournalArticleScope.resolve(JournalImportRequest.document, JournalImportRequest.articleScope);
+            if (!JournalImportRequest.target || !JournalImportRequest.target.isValid || JournalImportRequest.target.parentStory.id !== articleContext.body.id) throw Error("ARTICLE_TARGET_NOT_BODY");
+        }
         JournalImportRequest.result = importArticle(JournalImportRequest.document, JournalImportRequest.target, JournalImportRequest.data, JournalImportRequest.deferRecompose === true);
         return;
     }
@@ -333,6 +338,10 @@
             if (code===0x2264 || code===0x2265) {
                 var songFont=findInstalledFont(["宋体","SimSun"]);if(!songFont)throw Error("缺少公式比较符号字体：宋体");
                 c.appliedFont=songFont;c.fontStyle="Regular";report.songFixed=(report.songFixed||0)+1;
+            } else if(code===0x2192) {
+                var arrowFont=findInstalledFont(["Times New Roman\tRegular"]);
+                if(!arrowFont)throw Error("缺少正文箭头字体：Times New Roman");
+                c.properties={appliedFont:arrowFont,fontStyle:"Regular"};
             } else if (code===0xFF1C || code===0xFF1E || code===0x003C || code===0x003E || code===0xFF0D || code===0x2212) { // ＜ ＞ < > 及减号 －(全角U+FF0D) −(U+2212) → 黑体（现宋体无 U+FF0D 字形会缺字）
                 if (heitiFont) { try { c.appliedFont=heitiFont; report.heitiFixed++; } catch(e1) {} }
             } else if (code===0xFF1D || code===0x003D) { // 全角＝ 或 半角= → Symbol（+下标空格）

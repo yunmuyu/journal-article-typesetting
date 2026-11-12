@@ -3,6 +3,18 @@ const context={};vm.createContext(context);vm.runInContext(fs.readFileSync(path.
 const glyph={contents:{toString:()=> 'DOUBLE_LEFT_QUOTE'},position:1,fontStyle:'Regular'};
 const text={characters:{0:glyph,itemByRange(a,b){assert.equal(a,0);assert.equal(b,0);return {contents:'“'};}}};
 const matches=context.JournalLayout.sourceTableCharacterMatches;
+const project=context.JournalLayout.projectTableRuns;
+const runs=[
+  {tableIndex:0,rowIndex:0,cellIndex:0,start:0,text:'A⟦EQ-'},
+  {tableIndex:0,rowIndex:0,cellIndex:0,start:5,text:'001⟧B⟦EQ-002⟧'},
+  {tableIndex:0,rowIndex:0,cellIndex:0,start:18,text:'²',italic:true,position:'superscript'},
+  {tableIndex:0,rowIndex:0,cellIndex:1,start:0,text:'C'}
+];
+const projected=project(runs);
+assert.deepEqual(Array.from(projected.runs,r=>[r.cellIndex,r.start,r.text]),[[0,0,'A'],[0,2,'B'],[0,4,'²'],[1,0,'C']]);
+assert.deepEqual(Array.from(projected.anchors,r=>[r.cellIndex,r.start,r.number]),[[0,1,1],[0,3,2]]);
+assert.equal(projected.runs[2].italic,true);
+assert.equal(projected.runs[2].position,'superscript');
 assert.equal(matches(text,0,'“',1,false),true);
 assert.equal(matches(text,0,'”',1,false),false);
 assert.equal(matches(text,0,'“',2,false),false);

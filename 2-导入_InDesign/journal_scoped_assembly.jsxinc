@@ -1,0 +1,213 @@
+/* Rebuild one article through explicit native identities; callers own save/queue. */
+var JournalScopedAssembly = (function () {
+    function fail(code, detail) { throw Error(code + (detail === undefined ? "" : " " + detail)); }
+    function read(path) { var f=File(path);f.encoding='UTF-8';if(!f.open('r'))fail('SCOPED_READ',path);try{return f.read();}finally{f.close();} }
+    function parse(path) { return eval('('+read(path)+')'); }
+    function plain(text) { return String(text).replace(/[\s\uFFFC\u0016]/g,''); }
+    function style(d,name) { var found=[];for(var i=0;i<d.allParagraphStyles.length;i++)if(d.allParagraphStyles[i].name===name)found.push(d.allParagraphStyles[i]);if(found.length!==1)fail('SCOPED_STYLE',name);return found[0]; }
+    function plan(job) {
+        if(!job.data||!job.data.blocks||!job.data.blocks.length)fail('SCOPED_BLOCKS_REQUIRED');
+        var tables=0,figures=0,figureNumbers={},formulas={},n;
+        function collectFormulas(text){
+            var markers=JournalArticleAssembly.formulaMarkers(text);
+            for(var i=0;i<markers.length;i++){
+                var number=markers[i].number;
+                if(formulas[number])fail('SCOPED_FORMULA_DUPLICATE',number);
+                formulas[number]=true;
+            }
+        }
+        for(var i=0;i<job.data.blocks.length;i++){
+            var b=job.data.blocks[i];if(b.role==='table_gap')tables++;
+            if(b.role==='figure_caption'&&String(b.text).replace(/\s/g,'')){var m=String(b.text).match(/^图\s*(\d+)/);if(!m)fail('SCOPED_CAPTION_NUMBER');n=Number(m[1]);if(figureNumbers[n])fail('SCOPED_FIGURE_DUPLICATE',n);figureNumbers[n]=true;figures++;}
+            collectFormulas(b.text);
+        }
+        if(tables!==job.supplement.tables.length||tables!==job.structures.tables.length||tables!==job.tables.length)fail('SCOPED_TABLE_COUNT');
+        for(i=0;i<tables;i++){
+            var rows=job.supplement.tables[i].rows;
+            for(var row=0;row<rows.length;row++)for(var cell=0;cell<rows[row].length;cell++)collectFormulas(rows[row][cell]);
+        }
+        if(figures!==job.assets.length)fail('SCOPED_FIGURE_COUNT');
+        var count=0;for(n in formulas)if(formulas.hasOwnProperty(n))count++;
+        if(count!==(job.formulas.entries||[]).length)fail('SCOPED_FORMULA_COUNT');
+        var formulaSeen={},figureSeen={};
+        for(i=0;i<(job.formulas.entries||[]).length;i++){n=job.formulas.entries[i].number;if(!formulas[n]||formulaSeen[n])fail('SCOPED_FORMULA_IDENTITY',n);formulaSeen[n]=true;}
+        for(i=0;i<job.assets.length;i++){n=job.assets[i].number;if(!figureNumbers[n]||figureSeen[n])fail('SCOPED_FIGURE_IDENTITY',n);figureSeen[n]=true;}
+        for(i=0;i<job.tables.length;i++)if(job.tables[i].kind!=='ordinary')fail('SCOPED_TABLE_KIND');
+        var maximumWidth=job.geometry.spreadWidthMm||job.geometry.columnWidthMm;
+        for(i=0;i<job.assets.length;i++)if(!(job.assets[i].width>0&&job.assets[i].width<=maximumWidth+.1))fail('SCOPED_WIDE_FIGURE_REQUIRES_PLAN',job.assets[i].number);
+        return {tables:tables,figures:figures,formulas:count,blocks:job.data.blocks.length};
+    }
+    function view(d,context) {
+        var pages=context.pages.slice(0),graphics=[],selected={},stories=context.stories.slice(0);
+        for(var i=0;i<pages.length;i++)selected[pages[i].id]=true;pages[-1]=pages[pages.length-1];
+        function currentPageItems(){var items=[],all=d.allPageItems;for(var j=0;j<all.length;j++)if(all[j].parentPage&&selected[all[j].parentPage.id])items.push(all[j]);return items;}
+        var all=d.allGraphics;for(i=0;i<all.length;i++)if(all[i].parent.parentPage&&selected[all[i].parent.parentPage.id])graphics.push(all[i]);
+        stories.itemByID=function(id){for(var j=0;j<stories.length;j++)if(stories[j].id===id)return stories[j];fail('SCOPED_STORY_LOOKUP',id);};
+        return {name:d.name,pages:pages,stories:stories,allPageItems:currentPageItems(),currentPageItems:currentPageItems,allGraphics:graphics,allParagraphStyles:d.allParagraphStyles,allCharacterStyles:d.allCharacterStyles,paragraphStyles:d.paragraphStyles,characterStyles:d.characterStyles,compositeFonts:d.compositeFonts,masterSpreads:d.masterSpreads,recompose:function(){d.recompose();}};
+    }
+    function appendFlowFrames(page,previous,g,separate,articleId) {
+        var left=page.side===PageSideOptions.LEFT_HAND?g.leftPageLeftMm:g.rightPageLeftMm;
+        for(var c=0;c<(separate?2:1);c++){
+            var x=left+c*(g.columnWidthMm+g.columnGapMm),width=separate?g.columnWidthMm:g.spreadWidthMm;
+            var f=page.textFrames.add({geometricBounds:[g.bodyTopMm,x,g.bodyBottomMm,x+width]}).getElements()[0];
+            f.textFramePreferences.textColumnCount=separate?1:2;f.textFramePreferences.textColumnGutter=g.columnGapMm;
+            f.textFramePreferences.insetSpacing=0;f.textFramePreferences.verticalJustification=VerticalJustification.TOP_ALIGN;
+            f.insertLabel('journal-article-id',articleId);f.label='article-body';previous.nextTextFrame=f;previous=f;
+        }
+        return previous;
+    }
+    function growBodyPages(d,body,job,separate){
+        return JournalArticleAssembly.growBodyPages(d,body,job,function(){
+            var previous=body.textContainers[body.textContainers.length-1],master=previous.parentPage.appliedMaster;
+            var page=d.pages.add();page.appliedMaster=master;
+            appendFlowFrames(page,previous,job.templateContract.geometry,separate,job.taskId);
+        });
+    }
+    function flowFrames(d,context,g,separate) {
+        var body=context.body,old=body.textContainers,first=[old[0].getElements()[0],old[1].getElements()[0]],remove=[];
+        body.contents='';for(var i=2;i<old.length;i++)remove.push(old[i].getElements()[0]);
+        first[1].nextTextFrame=NothingEnum.NOTHING;for(i=remove.length-1;i>=0;i--)if(remove[i].isValid)remove[i].remove();
+        var previous=first[1];
+        for(i=1;i<context.pages.length;i++){
+            previous=appendFlowFrames(context.pages[i],previous,g,separate,context.articleId);
+        }
+        return first;
+    }
+    function deferTable(blocks,request){
+        var gap=-1,count=0;
+        for(var i=0;i<blocks.length;i++)if(blocks[i].role==='table_gap'){
+            count++;
+            if(count===request.number){gap=i;break;}
+        }
+        if(gap<1||blocks[gap-1].role!=='table_caption')fail('SCOPED_TABLE_DEFERRAL_CAPTION',request.number);
+        var end=gap,paragraphs=0;
+        while(paragraphs<request.paragraphs&&end+1<blocks.length){
+            var next=blocks[end+1];
+            if(/^heading/.test(next.role)&&!/结\s*论\s*$/.test(next.text)){end++;continue;}
+            if(next.role!=='body')break;
+            end++;paragraphs++;
+        }
+        if(paragraphs!==request.paragraphs||paragraphs<1)fail('SCOPED_TABLE_DEFERRAL_BOUNDARY',request.number);
+        var pair=blocks.splice(gap-1,2);
+        blocks.splice(end-1,0,pair[0],pair[1]);
+        return {table:request.number,fromBlock:gap-1,afterBlock:end,paragraphs:paragraphs,reason:'measured-page-window'};
+    }
+    function run(d,spec,job) {
+        var counts=plan(job),context=JournalArticleScope.resolve(d,spec),body=context.body,g=job.geometry;
+        var separate=true;for(var ti=0;ti<job.tables.length;ti++)if(job.tables[ti].wide)separate=false;
+        for(var ai=0;ai<job.assets.length;ai++)if(job.assets[ai].width>g.columnWidthMm+.1)separate=false;
+        var first=flowFrames(d,context,g,separate);
+        body.insertLabel('journal-role','body');body.insertLabel('journal-article-id',context.articleId);
+        var placement=JournalArticleAssembly.placeCaptionsByReference(job.data.blocks);
+        var blocks=placement.blocks;
+        var deferrals=job.figureDeferrals||(job.figureDeferral?[job.figureDeferral]:[]);
+        for(var di=0;di<deferrals.length;di++){
+            var deferral=deferrals[di],captionIndex=-1;
+            for(var ci=0;ci<blocks.length;ci++){
+                var match=String(blocks[ci].text).match(/^图\s*(\d+)\s/);
+                if(blocks[ci].role==='figure_caption'&&match&&Number(match[1])===deferral.number){captionIndex=ci;break;}
+            }
+            if(captionIndex<0||deferral.paragraphs<1)fail('SCOPED_FIGURE_DEFERRAL',deferral.number);
+            var end=captionIndex,movedParagraphs=0;
+            while(movedParagraphs<deferral.paragraphs&&end+1<blocks.length){
+                var next=blocks[end+1];
+                if(/^heading/.test(next.role)&&!/结\s*论\s*$/.test(next.text)){end++;continue;}
+                if(next.role!=='body')break;
+                end++;movedParagraphs++;
+            }
+            if(movedParagraphs!==deferral.paragraphs)fail('SCOPED_FIGURE_DEFERRAL_BOUNDARY',deferral.number);
+            var deferredCaption=blocks.splice(captionIndex,1)[0];
+            blocks.splice(end,0,deferredCaption);
+            for(var moved=captionIndex;moved<end;moved++){
+                if(blocks[moved].role!=='body')continue;
+                var wholeBlock={};
+                for(var field in blocks[moved])if(blocks[moved].hasOwnProperty(field))wholeBlock[field]=blocks[moved][field];
+                wholeBlock.keepWholeForGapTrial=true;
+                blocks[moved]=wholeBlock;
+            }
+            placement.decisions.push({figure:deferral.number,fromBlock:captionIndex,afterBlock:end,paragraphs:movedParagraphs,reason:'whole-paragraph-gap-trial'});
+        }
+        if(job.tableDeferral)placement.decisions.push(deferTable(blocks,job.tableDeferral));
+        var JournalImportRequest={document:d,target:body.insertionPoints[0],data:{blocks:blocks},deferRecompose:true,articleScope:spec};
+        eval(read(job.importerPath).replace(/^#target[^\r\n]*[\r\n]*/,''));
+        for(var i=blocks.length-1;i>=0;i--){
+            var block=blocks[i],p=body.paragraphs[i];
+            if(block.keepWholeForGapTrial){p.keepLinesTogether=true;p.keepAllLinesTogether=true;}
+            if(block.role==='table_gap'){
+                var index=block.tableNumber?block.tableNumber-1:-1;
+                if(index<0){index=0;for(var bi=0;bi<i;bi++)if(blocks[bi].role==='table_gap')index++;}
+                var tSpec=job.tables[index],structure=job.structures.tables[index];structure.headerRows=tSpec.headerRows;
+                var table=JournalArticleAssembly.table(d,p,job.supplement.tables[index].rows,structure,tSpec,job,null);
+                table.insertLabel('journal-article-id',context.articleId);
+                if(tSpec.wide){
+                    p.spanColumnType=SpanColumnTypeOptions.SPAN_COLUMNS;p.spanSplitColumnCount=SpanColumnCountOptions.ALL;
+                    var caption=body.paragraphs[i-1];caption.startParagraph=StartParagraph.ANYWHERE;caption.keepWithNext=1;caption.spanColumnType=SpanColumnTypeOptions.SPAN_COLUMNS;caption.spanSplitColumnCount=SpanColumnCountOptions.ALL;
+                }
+            }else if(block.role==='figure_caption'&&plain(block.text)){
+                var number=Number(String(block.text).match(/^图\s*(\d+)/)[1]),asset=null;
+                for(var ai=0;ai<job.assets.length;ai++)if(job.assets[ai].number===number)asset=job.assets[ai];
+                if(!asset)fail('SCOPED_FIGURE_MISSING',number);
+                JournalArticleAssembly.captionBlock(d,p,asset,asset.width>g.columnWidthMm+.1);
+            }else{
+                var standalone=JournalArticleAssembly.standaloneFormulaNumber(block.text),row=JournalArticleAssembly.sideBySideFormulaNumbers(block.text);
+                if(standalone!==null){JournalArticleAssembly.formula(d,p,standalone,job,null,block.text);p.tabStops.everyItem().remove();p.tabStops.add({position:g.columnWidthMm/2,alignment:TabStopAlignment.CENTER_ALIGN});p.tabStops.add({position:g.columnWidthMm,alignment:TabStopAlignment.RIGHT_ALIGN});}
+                else if(row!==null)JournalArticleAssembly.displayFormulaRow(d,p,job,null);
+                else{var markers=JournalArticleAssembly.formulaMarkers(block.text);if(markers.length)JournalArticleAssembly.inlineFormulas(d,p,markers,job,null);}
+            }
+        }
+        d.recompose();
+        var v=view(d,context),config=job.auditConfig||{};
+        config.sourceTextFormatting=job.data.blocks;config.formulaNumbers=job.formulas.entries||[];
+        config.tableKinds=job.tables;config.tableHeaderRows=[];for(i=0;i<job.tables.length;i++)config.tableHeaderRows.push(job.tables[i].headerRows);
+        JournalLayout.normalizeArticleParagraphs({stories:[body],characterStyles:d.characterStyles,allCharacterStyles:d.allCharacterStyles});
+        try{
+            JournalLayout.normalizeArticleTables(v,config,true);
+            JournalLayout.applySourceTableFormatting(v,config);
+        }
+        catch(tableError){fail('SCOPED_SOURCE_TABLE_FORMAT',String(tableError)+' @'+tableError.line);}
+        var tableMeasurements=[];
+        for(i=0;i<job.tables.length;i++){
+            var tableSpec=job.tables[i],nativeTable=null;
+            for(var nt=0;nt<body.tables.length;nt++)if(body.tables[nt].label==='source-table-'+tableSpec.number)nativeTable=body.tables[nt];
+            if(!nativeTable)fail('SCOPED_TABLE_MEASUREMENT',tableSpec.number);
+            var keep=tableSpec.measuredCellNoBreak;
+            if(keep){
+                var keptCell=null;
+                for(var ni=0;ni<nativeTable.cells.length;ni++){
+                    var checked=nativeTable.cells[ni];
+                    if(checked.parentRow.index===keep.row&&checked.parentColumn.index===keep.column){keptCell=checked;break;}
+                }
+                if(!keptCell||keep.offset<0||keep.length!==2||keep.offset+keep.length>keptCell.texts[0].characters.length)
+                    fail('SCOPED_TABLE_MEASURED_RANGE',tableSpec.number);
+                var range=keptCell.texts[0].characters.itemByRange(keep.offset,keep.offset+1);
+                if(!/^[\u3400-\u9fff]{2}$/.test(String(range.contents)))fail('SCOPED_TABLE_MEASURED_TEXT',tableSpec.number);
+                range.noBreak=true;
+                d.recompose();
+            }
+            tableMeasurements.push({number:tableSpec.number,result:JournalArticleAssembly.optimizeNativeTable(d,nativeTable,job.supplement.tables[i].rows,job.structures.tables[i],tableSpec.measureWidths)});
+            tableMeasurements[tableMeasurements.length-1].decimalColumns=JournalLayout.alignTableDecimals(d,nativeTable);
+        }
+        var formatErrors;
+        try{formatErrors=JournalLayout.sourceTextFormatting(v,config,true);}
+        catch(formatError){fail('SCOPED_SOURCE_FORMAT',String(formatError)+' @'+formatError.line);}
+        if(formatErrors.length)fail('SCOPED_SOURCE_FORMAT',formatErrors.join(';'));
+        JournalLayout.protectLineTokens(v);
+        var items=v.allPageItems;for(i=0;i<items.length;i++)if(/^source-(figure|formula)-/.test(items[i].label)){
+            var object=items[i];object.insertLabel('journal-article-id',context.articleId);
+            if(object.extractLabel('formula-display')==='unnumbered'){
+                var paragraph=object.parent.paragraphs[0],bounds=object.geometricBounds;
+                // Resolve through the final anchor after all earlier paragraph replacements.
+                if(plain(paragraph.contents))fail('SCOPED_UNNUMBERED_FORMULA_PARAGRAPH',object.label);
+                paragraph.applyParagraphStyle(style(d,'公式'),true);
+                paragraph.justification=Justification.CENTER_ALIGN;
+                paragraph.leading=Math.max(15,(bounds[2]-bounds[0]+1)*72/25.4);
+                paragraph.spaceBefore=0;paragraph.spaceAfter=0;
+            }
+        }
+        d.recompose();
+        JournalLayout.formulaLineSpacing(v,true);var formulaNumberAdjustments=JournalLayout.fitFormulaNumbers(v,true);d.recompose();
+        JournalLayout.repairOrphans(v);
+        return {status:'scoped-assembled-unchecked',counts:counts,usesNativeColumns:!separate,figurePlacement:placement.decisions,tableMeasurements:tableMeasurements,formulaNumberAdjustments:formulaNumberAdjustments,bodyOverflow:body.overflows,bodyStoryId:body.id,firstFrames:[first[0].id,first[1].id]};
+    }
+    return {plan:plan,view:view,run:run,growBodyPages:growBodyPages,deferTable:deferTable};
+}());

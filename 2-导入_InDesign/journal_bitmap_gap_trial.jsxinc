@@ -1,0 +1,153 @@
+/* Experimental library. Run only on independent document copies; the caller discards rejected variants. */
+var JournalBitmapGapTrial=(function(){
+    function ownedAnchor(item,body){
+        var anchor=item.parent;
+        return anchor&&anchor.constructor.name==='Character'&&anchor.parentStory&&anchor.parentStory.id===body.id&&
+            anchor.paragraphs.length?anchor.paragraphs[0]:null;
+    }
+    function scaleChoices(blank,height,minimum,captionAdvance){
+        var upper=Math.min(.99,(blank-captionAdvance)/height),result=[];
+        if(!(upper>=minimum))return result;
+        for(var i=0;i<5&&upper-i*.015>=minimum;i++)result.push(upper-i*.015);
+        return result;
+    }
+    function run(d,body,config,pageName,allowDeferral){
+        var frames=body.textContainers,frame=null,items=d.allPageItems,bitmap=[],initial,plan=null;
+        function isBitmap(item){
+            return /^source-figure-\d+$/.test(item.label)&&item.graphics.length===1&&
+                item.graphics[0].itemLink&&/\.(jpe?g|png|tiff?|bmp)$/i.test(String(item.graphics[0].itemLink.name));
+        }
+        function caption(n){for(var i=2;i<body.paragraphs.length;i++)if(new RegExp('^图\\s*'+n+'\\s').test(String(body.paragraphs[i].contents)))return i;return -1;}
+        function pageGaps(){
+            var errors=JournalLayout.auditCandidateGeometry(JournalLayout.auditView(d,config),config,true),out=[];
+            for(var i=0;i<errors.length;i++)if(/^(LARGE_EMPTY_REGION|EMPTY_ARTICLE_PAGE|TRAILING_BLANK_PAGE|OVERSET|HEADING_ORPHAN|CONCLUSION_ORPHAN|FIGURE_REFERENCE_ORDER|SINGLE_LINE_PAGE_CONTINUATION)$/.test(errors[i].code))out.push(errors[i]);
+            return out;
+        }
+        function breaksBefore(offset){
+            var out=[];
+            for(var i=0;i<frames.length;i++)if(frames[i].parentPage.documentOffset<offset)out.push(JournalLayout.nativeFlowBands(frames[i]).signature);
+            return out.join('/');
+        }
+        for(var i=0;i<frames.length;i++)if(String(frames[i].parentPage.name)===String(pageName)&&frames[i].textFramePreferences.textColumnCount===2){frame=frames[i];break;}
+        if(!frame)return {status:'skipped',reason:'NO_TWO_COLUMN_FRAME'};
+        var bands=JournalLayout.nativeFlowBands(frame).bands,band=bands[bands.length-1],box=frame.geometricBounds;
+        if(!band||band.cut||!band.left.length||!band.right.length)return {status:'skipped',reason:'NO_FULL_COLUMN_PAIR'};
+        var left=band.left[band.left.length-1],blank=box[2]-Number(left.baseline)-Number(left.descent);
+        var offset=frame.parentPage.documentOffset,mid=(box[1]+box[3])/2,firstRight=band.right[0].insertionPoints[0].index;
+        for(var i=0;i<items.length;i++){
+            var item=items[i];
+            if(!item.parentPage||!isBitmap(item))continue;
+            var owner=ownedAnchor(item,body);
+            if(!owner)continue;
+            var n=Number(String(item.label).replace('source-figure-','')),ci=caption(n);
+            if(ci<2)continue;
+            var anchor=body.paragraphs[ci-2];
+            if(owner.index!==anchor.index)continue;
+            bitmap.push({item:item,number:n,caption:ci,anchor:anchor.index,page:item.parentPage.documentOffset});
+        }
+        bitmap.sort(function(a,b){return a.anchor-b.anchor;});
+        var choice=null;
+        for(var i=0;i<bitmap.length;i++){
+            var v=bitmap[i],q=v.item.geometricBounds;
+            if(v.page===offset&&q[1]>=mid&&v.anchor>=left.insertionPoints[-1].index&&v.anchor<=firstRight){choice=v;break;}
+        }
+        if(!choice)return {status:'skipped',reason:'NO_BITMAP_AT_COLUMN_BOUNDARY'};
+        var bounds=choice.item.geometricBounds.slice(0),width=bounds[3]-bounds[1],height=bounds[2]-bounds[0];
+        var captionAdvance=(Number(body.paragraphs[choice.caption-1].leading)+Number(body.paragraphs[choice.caption].leading))*25.4/72;
+        var scales=scaleChoices(blank,height,.75,captionAdvance),prefix=breaksBefore(offset),trials=[],deferred=null;
+        if(!scales.length)return {status:'skipped',reason:'BITMAP_CANNOT_FIT_WITHIN_LIMIT'};
+        initial=pageGaps();
+        if(allowDeferral){
+            for(var i=0;i<bitmap.length;i++){
+                var entry=bitmap[i],ci=entry.caption;
+                if(entry.page!==offset+1||ci+3>=body.paragraphs.length)continue;
+                var previous=String(body.paragraphs[ci-3].contents);
+                var heading=String(body.paragraphs[ci+1].appliedParagraphStyle.name).replace(/^journal-[^:]+::/,'');
+                var prose=body.paragraphs[ci+2],proseStyle=String(prose.appliedParagraphStyle.name).replace(/^journal-[^:]+::/,'');
+                var stop=body.paragraphs[ci+3];
+                if(!new RegExp('图\\s*'+entry.number+'(?!\\d)').test(previous)||heading!=='二级标题'||
+                    !/^(正文|正文_wrd_1|期刊正文_.*)$/.test(proseStyle)||!/^表\s*\d+\s/.test(String(stop.contents)))continue;
+                var first=body.paragraphs[ci-2],last=body.paragraphs[ci];
+                body.characters.itemByRange(first.index,last.characters[-1].index).move(LocationOptions.BEFORE,stop.insertionPoints[0]);
+                deferred=entry.number;break;
+            }
+            if(deferred===null)return {status:'skipped',reason:'NO_COMPLETE_REFERENCED_FIGURE_DEFERRAL'};
+        }
+        for(var i=0;i<scales.length;i++){
+            var scale=scales[i],q=choice.item.geometricBounds;
+            choice.item.geometricBounds=[q[0],q[1],q[0]+height*scale,q[1]+width*scale];
+            choice.item.fit(FitOptions.PROPORTIONALLY);
+            d.recompose();
+            var errors=pageGaps(),targetStillBlank=false,newIssue=false;
+            for(var j=0;j<errors.length;j++){
+                var e=errors[j],same=false;
+                if(e.code==='LARGE_EMPTY_REGION'&&e.detail.indexOf('page '+pageName+' ')===0)targetStillBlank=true;
+                for(var k=0;k<initial.length;k++)if(initial[k].code===e.code&&initial[k].detail===e.detail){same=true;break;}
+                if(!same)newIssue=true;
+            }
+            var landed=choice.item.parentPage&&choice.item.parentPage.documentOffset===offset&&choice.item.geometricBounds[1]<mid;
+            var ppi=choice.item.graphics[0].effectivePpi,readable=ppi&&Math.min(ppi[0],ppi[1])>=300;
+            var ok=landed&&readable&&!body.overflows&&!targetStillBlank&&!newIssue&&prefix===breaksBefore(offset);
+            trials.push({scale:scale,landed:landed,ppi:ppi,issues:errors,accepted:ok});
+            if(ok){plan={status:'accepted',page:pageName,figure:choice.number,deferredFigure:deferred,
+                bounds:choice.item.geometricBounds,scale:scale,trials:trials};break;}
+        }
+        return plan||{status:'rejected',figure:choice.number,deferredFigure:deferred,trials:trials};
+    }
+    function deferStack(d,body,config,pageName){
+        var frames=body.textContainers,target=null,next=null;
+        for(var i=0;i+1<frames.length;i++)if(String(frames[i].parentPage.name)===String(pageName)){target=frames[i];next=frames[i+1];break;}
+        if(!target||target.textFramePreferences.textColumnCount!==2||!next.lines.length||
+            next.parentPage.documentOffset!==target.parentPage.documentOffset+1)return {status:'skipped',reason:'NO_ADJACENT_COLUMNS'};
+        var shape=JournalLayout.nativeFlowBands(target),band=shape.bands[shape.bands.length-1];
+        if(!band||band.cut||!band.left.length||!band.right.length)return {status:'skipped',reason:'NO_RIGHT_COLUMN_TAIL'};
+        var targetBottom=Number(target.geometricBounds[2])-JournalLayout.rules.bottomInset;
+        var initial=targetBottom-Number(band.right[band.right.length-1].baseline);
+        if(initial<12||initial>25)return {status:'skipped',reason:'RIGHT_GAP_OUTSIDE_STACK_RANGE'};
+        var paragraphs=body.paragraphs,figureItems={};
+        for(var i=0;i<d.allPageItems.length;i++){
+            var item=d.allPageItems[i],match=String(item.label).match(/^source-figure-(\d+)$/);
+            if(match&&item.parentPage&&item.parentPage.id===next.parentPage.id&&item.graphics.length===1&&
+                item.graphics[0].itemLink&&/\.(jpe?g|png|tiff?|bmp)$/i.test(String(item.graphics[0].itemLink.name))){
+                var owner=ownedAnchor(item,body);
+                if(owner)figureItems[match[1]]=owner;
+            }
+        }
+        function anchoredBitmap(index){
+            if(index+2>=paragraphs.length||String(paragraphs[index].contents).indexOf('\uFFFC')<0)return null;
+            var m=String(paragraphs[index+2].contents).match(/^图\s*(\d+)\s/);
+            return m&&figureItems[m[1]]&&figureItems[m[1]].index===paragraphs[index].index?m[1]:null;
+        }
+        function role(p){return String(p.appliedParagraphStyle.name).replace(/^journal-[^:]+::/,'');}
+        var cut=next.lines[0].insertionPoints[0].index,start=-1;
+        for(var i=0;i<paragraphs.length;i++)if(paragraphs[i].index===cut){start=i;break;}
+        if(start<0)return {status:'skipped',reason:'NEXT_PAGE_STARTS_WITH_CONTINUATION'};
+        if(start===0)return {status:'skipped',reason:'STACK_NOT_REFERENCED_BEFORE_INSERTION'};
+        var n1=anchoredBitmap(start),n2=anchoredBitmap(start+3);
+        if(!n1||!n2||start+8>=paragraphs.length)return {status:'skipped',reason:'NO_TWO_FIGURE_STACK'};
+        var heading=paragraphs[start+6],prose=paragraphs[start+7],stop=paragraphs[start+8];
+        if(!/^[二三]级标题$/.test(role(heading))||!/^(正文|正文_wrd_1|期刊正文_.*)$/.test(role(prose))||
+            /\uFFFC/.test(String(prose.contents))||!anchoredBitmap(start+8))return {status:'skipped',reason:'NO_COMPLETE_SECTION_AFTER_STACK'};
+        var priorText=String(paragraphs[start-1].contents);
+        if(!new RegExp('图\\s*'+n1+'(?!\\d)').test(priorText)||!new RegExp('(?:图\\s*|[、，,和及]\\s*)'+n2+'(?!\\d)').test(priorText))
+            return {status:'skipped',reason:'STACK_NOT_REFERENCED_BEFORE_INSERTION'};
+        var prefix=[];
+        for(var i=0;i<frames.length&&frames[i].id!==target.id;i++)prefix.push(JournalLayout.nativeFlowBands(frames[i]).signature);
+        var initialIssues=JournalLayout.auditCandidateGeometry(JournalLayout.auditView(d,config),config,true);
+        body.characters.itemByRange(paragraphs[start].index,paragraphs[start+5].characters[-1].index).move(LocationOptions.BEFORE,stop.insertionPoints[0]);
+        d.recompose();
+        var after=JournalLayout.nativeFlowBands(target).bands,part=after[after.length-1],errors=JournalLayout.auditCandidateGeometry(JournalLayout.auditView(d,config),config,true);
+        if(!part||!part.right.length||body.overflows)return {status:'rejected',reason:'INVALID_REFLOW'};
+        var gap=targetBottom-Number(part.right[part.right.length-1].baseline),newIssue=false;
+        for(var i=0;i<prefix.length;i++)if(prefix[i]!==JournalLayout.nativeFlowBands(frames[i]).signature)newIssue=true;
+        for(var i=0;i<errors.length;i++){
+            var e=errors[i],same=false;
+            if(!/^(LARGE_EMPTY_REGION|EMPTY_ARTICLE_PAGE|TRAILING_BLANK_PAGE|OVERSET|HEADING_ORPHAN|CONCLUSION_ORPHAN|FIGURE_REFERENCE_ORDER|SINGLE_LINE_PAGE_CONTINUATION)$/.test(e.code))continue;
+            for(var j=0;j<initialIssues.length;j++)if(initialIssues[j].code===e.code&&initialIssues[j].detail===e.detail){same=true;break;}
+            if(!same)newIssue=true;
+        }
+        return {status:!newIssue&&Math.abs(gap)<Math.abs(initial)-1?'accepted':'rejected',page:pageName,
+            deferredFigures:[Number(n1),Number(n2)],beforeMm:initial,afterMm:gap,issues:errors};
+    }
+    return {run:run,deferStack:deferStack,scaleChoices:scaleChoices};
+})();

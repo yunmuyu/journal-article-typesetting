@@ -3,11 +3,38 @@ const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 
-const context = { VerticalJustification: { TOP_ALIGN: "top", CENTER_ALIGN: "center" } };
+const context = {
+    VerticalJustification: { TOP_ALIGN: "top", CENTER_ALIGN: "center" },
+    SpanColumnTypeOptions: { SPAN_COLUMNS: "span" }
+};
 vm.createContext(context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, "../2-导入_InDesign/journal_layout_rules.jsxinc"), "utf8"), context);
 const layout = context.JournalLayout;
 const mmPerPt = 25.4 / 72;
+
+for (const overflowAfterJoin of [false, true]) {
+    const pages = [{ id: 1, name: "11" }, { id: 2, name: "12" }, { id: 3, name: "10" }];
+    const onPage = page => ({ insertionPoints: [{ parentTextFrames: [{ parentPage: page }] }] });
+    const caption = { ...onPage(pages[0]), contents: "表1  容灾体系对比", tables: [] };
+    const table = {
+        label: "source-table-1", headerRowCount: 1,
+        rows: [{ cells: [{ texts: [onPage(pages[1])] }] }, { cells: [{ texts: [onPage(pages[1])] }] }]
+    };
+    const anchor = { tables: [table], spanColumnType: "span", keepWithPrevious: false };
+    const body = { paragraphs: [caption, anchor], overflows: false };
+    const document = { recompose() {
+        caption.insertionPoints[0].parentTextFrames[0].parentPage = pages[anchor.keepWithPrevious ? 2 : 0];
+        for (const row of table.rows) {
+            row.cells[0].texts[0].insertionPoints[0].parentTextFrames[0].parentPage = pages[anchor.keepWithPrevious ? 2 : 1];
+        }
+        body.overflows = anchor.keepWithPrevious && overflowAfterJoin;
+    } };
+    const [result] = layout.joinSeparatedWideTableCaptions(document, body);
+    assert.equal(result.accepted, !overflowAfterJoin);
+    assert.equal(anchor.keepWithPrevious, !overflowAfterJoin);
+    assert.equal(body.overflows, false);
+    assert.equal(result.page, overflowAfterJoin ? null : "10");
+}
 
 function collection(values) {
     values[-1] = values[values.length - 1];
@@ -84,6 +111,21 @@ function fixture(firstBaseline, leadings, maximumBaseline = Infinity) {
         "the first line's adjustable interval must reach the frame bottom");
     assert.ok(f.writes.includes(0), "first interval was never adjusted");
     assert.ok(!f.writes.includes(2), "terminal leading must not alter following-frame flow");
+}
+
+{
+    const f = fixture(253.3, [15, 16, 16]);
+    const recompose = f.document.recompose;
+    f.document.recompose = () => {
+        recompose();
+        f.body.overflows = f.allLines[0].characters[0].leading > 15.000001;
+    };
+    const originalBottom = layout.last(f.frame);
+    layout.alignBottom(f.document);
+    assert.ok(f.writes.length > 0, "the alignment must try a candidate");
+    assert.equal(f.body.overflows, false);
+    assert.equal(f.allLines[0].characters[0].leading, 15);
+    assert.equal(layout.last(f.frame), originalBottom);
 }
 
 {

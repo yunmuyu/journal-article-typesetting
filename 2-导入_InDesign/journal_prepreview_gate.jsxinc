@@ -104,8 +104,12 @@ var JournalPrepreviewGate = (function () {
         var lastContent = -1;
         for (i = 0; i < pages.length; i++) if (pageHasContent[i]) lastContent = i;
         if (lastContent < 0) { add(errors, 'TRAILING_BLANK_PAGE', 'article body has no page content'); return errors; }
+        var pad=config&&config.trailingLeftStartPaddingPageId,tail=pages[pages.length-1];
+        var allowedPad=pad&&document.articleScoped&&lastContent===pages.length-2&&tail.id===pad&&
+            tail.side===PageSideOptions.RIGHT_HAND&&tail.allPageItems.length===0;
+        if(pad&&!allowedPad)add(errors,'INVALID_LEFT_START_PADDING','explicit page must be the empty right page after the last content');
         for (i = 0; i < pages.length; i++) {
-            if (!pageHasContent[i] && i > lastContent) add(errors, 'TRAILING_BLANK_PAGE', 'page ' + pageName(pages[i]) + ' follows the last body content page');
+            if (!pageHasContent[i] && i > lastContent && !(allowedPad&&i===pages.length-1)) add(errors, 'TRAILING_BLANK_PAGE', 'page ' + pageName(pages[i]) + ' follows the last body content page');
             else if (!pageHasContent[i] && i < lastContent) add(errors, 'EMPTY_ARTICLE_PAGE', 'page ' + pageName(pages[i]) + ' is empty before later body content');
         }
         var maxEmpty = config && typeof config.maxUnexplainedBlankMm === 'number' ? config.maxUnexplainedBlankMm : DEFAULT_EMPTY_MM;
@@ -135,7 +139,13 @@ var JournalPrepreviewGate = (function () {
     function makeLineBox(line, identity) {
         var page = pageOfLine(line), bounds = lineBounds(line);
         if (!page || !bounds || !meaningful(line.contents)) return null;
-        return {pageKey:pageIdentity(page), pageName:pageName(page), bounds:bounds, kind:identity.kind, owner:identity.owner, detail:identity.detail, paragraphStart:identity.paragraphStart};
+        var formulas = {};
+        if (identity.kind === 'table' && String(line.contents).indexOf('\uFFFC') >= 0) {
+            var items = line.allPageItems || [];
+            for (var i = 0; i < items.length; i++)
+                if (/^source-formula-/.test(String(items[i].label))) formulas[String(items[i].id)] = true;
+        }
+        return {pageKey:pageIdentity(page), pageName:pageName(page), bounds:bounds, kind:identity.kind, owner:identity.owner, detail:identity.detail, paragraphStart:identity.paragraphStart, formulas:formulas};
     }
     function boxesOverlap(a, b) {
         return Math.min(a.bounds[2], b.bounds[2]) - Math.max(a.bounds[0], b.bounds[0]) > EPSILON && Math.min(a.bounds[3], b.bounds[3]) - Math.max(a.bounds[1], b.bounds[1]) > EPSILON;
@@ -157,7 +167,7 @@ var JournalPrepreviewGate = (function () {
             if (!sourceItem(item) || !item.parentPage) continue;
             var parentParagraphStart = -1;
             try { if (item.parent && item.parent.paragraphs.length) parentParagraphStart = Number(item.parent.paragraphs[0].insertionPoints[0].index); } catch (ignore) {}
-            boxes.push({pageKey:pageIdentity(item.parentPage), pageName:pageName(item.parentPage), bounds:item.geometricBounds, kind:'item', owner:String(item.label), detail:String(item.label), paragraphStart:parentParagraphStart});
+            boxes.push({pageKey:pageIdentity(item.parentPage), pageName:pageName(item.parentPage), bounds:item.geometricBounds, kind:'item', owner:String(item.label), detail:String(item.label), paragraphStart:parentParagraphStart, itemId:String(item.id)});
         }
         var reported = 0;
         for (var first = 0; first < boxes.length; first++) for (var second = first + 1; second < boxes.length; second++) {
@@ -167,6 +177,7 @@ var JournalPrepreviewGate = (function () {
             if (a.kind === 'item' && b.kind === 'item' && a.owner === b.owner) continue;
             if (a.kind === 'item' && b.kind === 'text' && a.paragraphStart === b.paragraphStart) continue;
             if (b.kind === 'item' && a.kind === 'text' && b.paragraphStart === a.paragraphStart) continue;
+            if (a.kind === 'table' && b.kind === 'item' && a.formulas[b.itemId]) continue;
             if (!boxesOverlap(a, b)) continue;
             add(errors, 'GEOMETRY_OVERLAP', 'page ' + a.pageName + ' [' + a.pageKey + '] ' + a.detail + ' overlaps page ' + b.pageName + ' [' + b.pageKey + '] ' + b.detail);
             reported++;
@@ -227,14 +238,18 @@ var JournalPrepreviewGate = (function () {
         }
         var issues=tableFigureInterruptions(fragments,figures);for(i=0;i<issues.length;i++)errors.push(issues[i]);
     }
-    function audit(document, config, context) {
-        var errors = [];
-        auditTextMetrics(context, errors, config);
-        var emptyErrors = auditEmptyRegions(document, config, context);for (var emptyIndex = 0; emptyIndex < emptyErrors.length; emptyIndex++) errors.push(emptyErrors[emptyIndex]);
+    function auditGeometry(document, config, context) {
+        var errors = auditEmptyRegions(document, config, context);
         auditOverlaps(document, context, errors);
         auditTableContinuity(document, context, errors);
         return errors;
     }
 
-    return {audit:audit,tableFigureInterruptions:tableFigureInterruptions};
+    function audit(document, config, context) {
+        var errors = [];
+        auditTextMetrics(context, errors, config);
+        return errors.concat(auditGeometry(document, config, context));
+    }
+
+    return {audit:audit,auditGeometry:auditGeometry,tableFigureInterruptions:tableFigureInterruptions};
 }());

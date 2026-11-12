@@ -3,3 +3,11 @@ assert.equal(typeof ctx.JournalFrontmatter.refitExistingFront,'function');
 const first={id:1},second={id:2};const front={geometricBounds:[30,21,160,186],parentPage:first,overflows:false,fit(){this.geometricBounds=[30,21,163.5,186];}};const columns=[{parentPage:first,geometricBounds:[168,14.5,240,100]},{parentPage:first,geometricBounds:[168,107,265,192.5]},{parentPage:second,geometricBounds:[26,17.5,265,103]}];const guide={geometricBounds:[160,21,168,186]};const doc={recompose(){}};
 const out=ctx.JournalFrontmatter.refitExistingFront(doc,front,columns,guide);assert.equal(out.deltaMm,3.5);assert.deepEqual(columns.map(x=>Array.from(x.geometricBounds)),[[171.5,14.5,240,100],[171.5,107,265,192.5],[26,17.5,265,103]]);assert.deepEqual(Array.from(guide.geometricBounds),[163.5,21,171.5,186]);assert.equal(front.geometricBounds[0],30);assert.equal(columns[0].geometricBounds[2],240);assert.equal(columns[1].geometricBounds[2],265);
 console.log('PASS refit existing front keeps fixed top, footer-side bottom and later pages; moves only first-page starts and gap guide');
+// Given: replacing front matter invalidates the native composition cache.
+let composed=false;
+const deferred={geometricBounds:[30,21,160,186],parentPage:first,overflows:false,fit(){this.geometricBounds=[30,21,composed?164:313,186];}};
+const deferredColumns=[{parentPage:first,geometricBounds:[168,14.5,240,100]},{parentPage:first,geometricBounds:[168,107,265,192.5]}];
+// When / Then: fit must use the new layout, not reject valid content using stale height.
+const refreshed=ctx.JournalFrontmatter.refitExistingFront({recompose(){composed=true;}},deferred,deferredColumns,null);
+assert.equal(refreshed.deltaMm,4);
+assert.equal(deferredColumns[0].geometricBounds[0],172);

@@ -1,0 +1,299 @@
+/* Runs on a checkpointed candidate. A failed trial must be discarded by the caller. */
+function trialSplitReferenceTail(d,body,requestedCut){
+    var frames=body.textContainers,left=frames[frames.length-1];
+    if(!left||left.textFramePreferences.textColumnCount!==2||left.tables.length||left.allGraphics.length)return {status:'skipped'};
+    var bands=JournalLayout.nativeFlowBands(left).bands;
+    if(bands.length!==1||bands[0].cut||!bands[0].left.length||!bands[0].right.length)return {status:'skipped'};
+    var band=bands[0],leftLast=band.left[band.left.length-1],tolerance=JournalLayout.rules.tailTolerance;
+    var initial=leftLast.baseline-band.right[band.right.length-1].baseline;
+    if(!isFinite(initial)||Math.abs(initial)<=tolerance)return {status:'skipped'};
+
+    var ranges=[],referenceRanges=[[],[]],sides=[band.left,band.right],hasReference=false;
+    if(requestedCut){
+        var combined=band.left.concat(band.right),boundary=-1;
+        for(var bi=1;bi<combined.length;bi++)if(combined[bi].insertionPoints[0].index===requestedCut.index){boundary=bi;break;}
+        if(boundary<1||!isFinite(requestedCut.deltaPt)||
+            combined[boundary-1].insertionPoints[-1].index!==requestedCut.index||
+            String(combined[boundary].paragraphs[0].appliedParagraphStyle.name).replace(/^journal-[^:]+::/,'')!=='参考文献 内容')
+            return {status:'rejected',reason:'REFERENCE_TAIL_REQUESTED_BREAK_INVALID'};
+        sides=[combined.slice(0,boundary),combined.slice(boundary)];
+        initial=requestedCut.deltaPt*25.4/72;
+    }
+    for(var side=0;side<2;side++)for(var i=0;i<sides[side].length;i++){
+        var line=sides[side][i],style=String(line.paragraphs[0].appliedParagraphStyle.name).replace(/^journal-[^:]+::/,'');
+        if(style==='参考文献 内容'){
+            hasReference=true;
+            if(!requestedCut&&Math.abs(initial)<=1&&line.insertionPoints)
+                referenceRanges[side].push({first:line.insertionPoints[0].index,last:line.insertionPoints[-1].index-1,
+                    lead:side?12.6:13.4,limit:side?13.4:12.6});
+        }
+        if((requestedCut?i+1===sides[side].length:!i)||!line.characters.length)continue;
+        var min,max;
+        if(style==='参考文献 内容'||style==='作者简介'&&!/^\s*作者简介/.test(String(line.contents))){min=12.6;max=13.4;}
+        else if(/^(正文|正文_wrd_1|期刊正文_.*)$/.test(style)){min=14.8;max=16;}
+        else continue;
+        var lead=Number(line.characters[-1].leading);
+        if(isFinite(lead)&&lead>=min-.001&&lead<=max+.001){
+            ranges.push({first:line.characters[0].index,last:line.characters[-1].index,
+                lead:lead,limit:(initial>0)===(side===1)?max:min});
+        }
+    }
+    if(referenceRanges[0].length&&referenceRanges[1].length)ranges=referenceRanges[0].concat(referenceRanges[1]);
+    if(!hasReference||!ranges.length)return {status:'skipped'};
+    var cut=requestedCut?requestedCut.index:leftLast.insertionPoints[-1].index,original=String(body.contents);
+    var preceding=frames.length>1?frames[frames.length-2]:null;
+    var precedingSignature=preceding?JournalLayout.nativeFlowBands(preceding).signature:null;
+    var bounds=left.geometricBounds.slice(0),preferences=left.textFramePreferences;
+    var width=(bounds[3]-bounds[1]-preferences.textColumnGutter)/2;
+    var right=left.parentPage.textFrames.add({geometricBounds:[bounds[0],bounds[3]-width,bounds[2],bounds[3]]});
+    right.textFramePreferences.insetSpacing=preferences.insetSpacing;
+    right.textFramePreferences.firstBaselineOffset=preferences.firstBaselineOffset;
+    right.textFramePreferences.minimumFirstBaselineOffset=preferences.minimumFirstBaselineOffset;
+    right.label='article-body';
+    right.insertLabel('journal-article-id',left.extractLabel('journal-article-id'));
+    preferences.verticalBalanceColumns=false;
+    preferences.textColumnCount=1;
+    left.nextTextFrame=right;
+
+    var recompositions=0,nativeEdges=null;
+    function measure(fraction){
+        for(var i=0;i<ranges.length;i++){
+            var interval=ranges[i];
+            body.characters.itemByRange(interval.first,interval.last).leading=interval.lead+(interval.limit-interval.lead)*fraction;
+        }
+        left.geometricBounds=[bounds[0],bounds[1],bounds[2],bounds[1]+width];
+        d.recompose();recompositions++;
+        var baseline=null;
+        for(var i=0;i<left.lines.length;i++)if(left.lines[i].insertionPoints[-1].index===cut){baseline=left.lines[i].baseline;break;}
+        if(baseline===null)return NaN;
+        var offsets=requestedCut?[.6,1,1.5,2,2.5,3]:[.6];
+        for(var oi=0;oi<offsets.length;oi++){
+            left.geometricBounds=[bounds[0],bounds[1],baseline+offsets[oi],bounds[1]+width];
+            d.recompose();recompositions++;
+            if(!body.overflows&&left.lines.length&&right.lines.length&&
+                left.lines[left.lines.length-1].insertionPoints[-1].index===cut&&right.lines[0].insertionPoints[0].index===cut){
+                var leftBottom=JournalLayout.last(left),rightBottom=JournalLayout.last(right);
+                nativeEdges={leftLines:left.lines.length,rightLines:right.lines.length,leftBottom:leftBottom,rightBottom:rightBottom,
+                    leftTop:left.lines[0].baseline,rightTop:right.lines[0].baseline,
+                    lastIndex:right.lines[right.lines.length-1].insertionPoints[-1].index};
+                return leftBottom-rightBottom;
+            }
+        }
+        return NaN;
+    }
+    var low=0,high=1,lower=measure(low),best=lower,bestFraction=0,limitResidual=null,samples=[];
+    if(!isFinite(lower))return {status:'rejected',reason:'REFERENCE_TAIL_BREAK_CHANGED'};
+    for(var i=0;i<16;i++){
+        var fraction=(low+high)/2,actual;
+        if(i===0){fraction=0;actual=lower;}
+        else{
+            if(i===1)fraction=1;
+            actual=measure(fraction);
+        }
+        if(requestedCut)samples.push({fraction:fraction,residualMm:isFinite(actual)?actual:null});
+        if(i===1&&isFinite(actual))limitResidual=actual;
+        if(isFinite(actual)&&Math.abs(actual)<Math.abs(best)){best=actual;bestFraction=fraction;}
+        if(isFinite(actual)&&Math.abs(actual)<=tolerance){
+            if(String(body.contents)!==original||preceding&&JournalLayout.nativeFlowBands(preceding).signature!==precedingSignature)
+                return {status:'rejected',reason:'REFERENCE_TAIL_CONTENT_OR_PREVIOUS_PAGE'};
+            return {status:'accepted',page:left.parentPage.name,cut:cut,beforeMm:initial,afterMm:actual,leadingFraction:fraction,recompositions:recompositions};
+        }
+        if(i===1&&isFinite(actual)&&actual*lower>0)return {status:'rejected',reason:'REFERENCE_TAIL_CAPACITY',
+            cut:cut,beforeMm:lower,afterMm:actual,recompositions:recompositions,nativeEdges:nativeEdges};
+        if(isFinite(actual)&&actual*lower>0)low=fraction;else high=fraction;
+    }
+    return {status:'rejected',reason:'REFERENCE_TAIL_RESIDUAL',cut:cut,beforeMm:lower,afterMm:best,
+        limitResidualMm:limitResidual,leadingFraction:bestFraction,recompositions:recompositions,samples:samples};
+}
+
+function trialSplitTablePage(d,body){
+    var frames=body.textContainers, text=String(body.contents), report=[];
+    function lastBaseline(lines){return Number(lines[lines.length-1].baseline);}
+    function owner(line){var f=line.insertionPoints[0].parentTextFrames;return f.length?f[0]:null;}
+    var previousPageFrame,tablePageFrame,followingPageFrame,top,lower,target,found=false,tableId;
+    for(var i=1;i+1<frames.length;i++){
+        previousPageFrame=frames[i-1];tablePageFrame=frames[i];followingPageFrame=frames[i+1];
+        if(previousPageFrame.parentPage.documentOffset+1!==tablePageFrame.parentPage.documentOffset||
+            tablePageFrame.parentPage.documentOffset+1!==followingPageFrame.parentPage.documentOffset||
+            previousPageFrame.textFramePreferences.textColumnCount!==2||tablePageFrame.textFramePreferences.textColumnCount!==2||
+            previousPageFrame.tables.length||tablePageFrame.tables.length!==1)continue;
+        var before=JournalLayout.nativeFlowBands(previousPageFrame).bands, bands=JournalLayout.nativeFlowBands(tablePageFrame).bands;
+        if(before.length!==1||before[0].cut||bands.length!==2||!bands[0].cut||
+            !before[0].left.length||!before[0].right.length||
+            !bands[0].left.length||!bands[0].right.length||!bands[1].left.length||!bands[1].right.length)continue;
+        target=previousPageFrame.geometricBounds[2]-JournalLayout.rules.bottomInset;
+        if(Math.abs(lastBaseline(before[0].right)-target)<=JournalLayout.rules.tolerance&&
+            Math.abs(lastBaseline(bands[0].left)-lastBaseline(bands[0].right))<=JournalLayout.rules.tolerance)continue;
+        var table=tablePageFrame.tables[0], whole=true;
+        if(table.width<=tablePageFrame.textFramePreferences.textColumnFixedWidth+.1)continue;
+        for(var ri=0;ri<table.rows.length;ri++){
+            var ls=table.rows[ri].cells[0].texts[0].lines, f=ls.length?owner(ls[0]):null;
+            if(!f||f.id!==tablePageFrame.id){whole=false;break;}
+        }
+        if(!whole)continue;
+        var at=-1;
+        for(var j=1;j+1<body.paragraphs.length;j++)if(body.paragraphs[j].tables.length&&body.paragraphs[j].tables[0].id===table.id){at=j;break;}
+        if(at<0)continue;
+        var title=body.paragraphs[at-1], after=body.paragraphs[at+1];
+        if(!/^\s*表\s*\d+/.test(String(title.contents))||!title.lines.length||!after.lines.length||
+            !owner(title.lines[0])||owner(title.lines[0]).id!==tablePageFrame.id||!owner(after.lines[0])||owner(after.lines[0]).id!==tablePageFrame.id)continue;
+        top=Math.max(lastBaseline(bands[0].left),lastBaseline(bands[0].right))+1.05;
+        lower=JournalLayout.inkBounds(after.lines[0])[0]-.97;
+        if(top>=lower||lower>=tablePageFrame.geometricBounds[2])continue;
+        tableId=table.id;
+        found=true;
+        break;
+    }
+    if(!found)return {status:'skipped'};
+        function structure(){
+            var result=[];
+            for(var i=0;i<frames.length;i++){
+                var f=frames[i], bands=JournalLayout.nativeFlowBands(f).bands, sizes=[];
+                for(var j=0;j<bands.length;j++){
+                    var pair=[bands[j].left,bands[j].right];
+                    for(var k=0;k<2;k++){
+                        var a=pair[k];
+                        sizes.push(a.length?String(a.length)+':'+a[0].insertionPoints[0].index+':'+a[a.length-1].insertionPoints[-1].index:'0');
+                    }
+                }
+                result.push(sizes.join('/'));
+            }
+            return result.join('|');
+        }
+        function align(f,band,side,target,isTail){
+            var shape=structure(), lines=JournalLayout.nativeFlowBands(f).bands[band][side], changes=[];
+            var first=Number(lines[lines.length-1].baseline), delta=target-first;
+            if(Math.abs(delta)<.009)return;
+            for(var i=1;i<lines.length;i++){
+                var line=lines[i],p=line.paragraphs[0],s=p.appliedParagraphStyle.name;
+                if(!line.characters.length||/\uFFFC/.test(String(line.contents)))continue;
+                var min,max;
+                if(s==='正文_wrd_1'){min=14.8;max=16;}
+                else if(isTail&&(s==='参考文献 内容'||(s==='作者简介'&&!/^\s*作者简介/.test(String(line.contents))))){min=12.6;max=13.4;}
+                else continue;
+                var lead=Number(line.characters[-1].leading);
+                if(lead>=min-.001&&lead<=max+.001)changes.push({a:line.characters[0].index,b:line.characters[-1].index,lead:lead,limit:delta>0?max:min});
+            }
+            var lo=0,hi=1,best=0,bestError=Math.abs(delta);
+            function apply(ratio){
+                for(var j=0;j<changes.length;j++){
+                    var c=changes[j];
+                    body.characters.itemByRange(c.a,c.b).leading=c.lead+(c.limit-c.lead)*ratio;
+                }
+                d.recompose();
+            }
+            for(var n=0;changes.length&&n<15;n++){
+                var ratio=n===0?1:(lo+hi)/2;
+                apply(ratio);
+                if(body.overflows||structure()!==shape){hi=ratio;continue;}
+                var a=JournalLayout.nativeFlowBands(f).bands[band][side], error=target-a[a.length-1].baseline;
+                if(Math.abs(error)<bestError){bestError=Math.abs(error);best=ratio;}
+                if(bestError<.009)break;
+                if(error*delta<0)hi=ratio;else lo=ratio;
+            }
+            apply(best);
+            if(body.overflows||structure()!==shape)throw Error('COLUMN_REFLOW_CHANGED '+f.parentPage.name+' '+first+' '+bestError);
+            report.push({page:f.parentPage.name,side:side,band:band,initialMm:delta,residualMm:bestError});
+        }
+
+        var box=previousPageFrame.geometricBounds.slice(0), mid=(box[1]+box[3])/2,gutter=previousPageFrame.textFramePreferences.textColumnGutter;
+        previousPageFrame.textFramePreferences.verticalBalanceColumns=false;
+        previousPageFrame.textFramePreferences.textColumnCount=1;
+        previousPageFrame.geometricBounds=[box[0],box[1],box[2],mid-gutter/2];
+        var right=previousPageFrame.parentPage.textFrames.add({geometricBounds:[box[0],mid+gutter/2,box[2],box[3]]}).getElements()[0];
+        right.textFramePreferences.insetSpacing=0;
+        right.textFramePreferences.firstBaselineOffset=previousPageFrame.textFramePreferences.firstBaselineOffset;
+        previousPageFrame.nextTextFrame=NothingEnum.NOTHING;
+        previousPageFrame.nextTextFrame=right;
+        right.nextTextFrame=tablePageFrame;
+        d.recompose();
+        frames=body.textContainers;
+
+
+
+        var bodyFrameBounds=tablePageFrame.geometricBounds.slice(0), tbox=bodyFrameBounds.slice(0), bbox=bodyFrameBounds.slice(0);
+        tbox[0]=top;tbox[2]=lower;
+        bbox[0]=lower;
+        var sheet=tablePageFrame.parentPage, tableFrame=sheet.textFrames.add({geometricBounds:tbox}).getElements()[0];
+        var below=sheet.textFrames.add({geometricBounds:bbox}).getElements()[0];
+        tableFrame.textFramePreferences.insetSpacing=0;
+        below.textFramePreferences.insetSpacing=0;
+        below.textFramePreferences.textColumnCount=2;
+        below.textFramePreferences.textColumnGutter=gutter;
+        var tabTitle,afterTable,tableTitleIndex=-1;
+        for(var ti=1;ti<body.paragraphs.length-1;ti++){
+            if(!body.paragraphs[ti].tables.length)continue;
+            tableTitleIndex=ti-1;
+            tabTitle=body.paragraphs[ti-1];
+            afterTable=body.paragraphs[ti+1];
+            break;
+        }
+
+        bodyFrameBounds[2]=top;
+        tablePageFrame.geometricBounds=bodyFrameBounds;
+        tablePageFrame.nextTextFrame=NothingEnum.NOTHING;
+        tablePageFrame.nextTextFrame=tableFrame;
+        tableFrame.nextTextFrame=below;
+        below.nextTextFrame=followingPageFrame;
+        body.paragraphs[tableTitleIndex].startParagraph=StartParagraph.NEXT_FRAME;
+        body.paragraphs[tableTitleIndex+2].startParagraph=StartParagraph.NEXT_FRAME;
+        d.recompose();
+        frames=body.textContainers;
+
+        align(right,0,'left',target,false);
+        var shift=target-JournalLayout.last(previousPageFrame), leftBox=previousPageFrame.geometricBounds.slice(0);
+        if(Math.abs(shift)<.1){leftBox[0]+=shift;previousPageFrame.geometricBounds=leftBox;d.recompose();}
+        align(previousPageFrame,0,'left',target,false);
+        var top=JournalLayout.nativeFlowBands(tablePageFrame).bands[0], leftTop=top.left;
+        var aboveTarget=top.right[top.right.length-1].baseline;
+        var rightGap=aboveTarget-leftTop[leftTop.length-1].baseline;
+        if(rightGap>0){
+            for(var gi=0;gi<leftTop.length;gi++){
+                var gapP=leftTop[gi].paragraphs[0];
+                if(gapP.appliedParagraphStyle.name!=='正文_wrd_1'||gapP.insertionPoints[0].index!==leftTop[gi].insertionPoints[0].index||gi===0)continue;
+                gapP.spaceBefore=Number(gapP.spaceBefore)+Math.min(2.2,rightGap);
+                d.recompose();
+                break;
+            }
+        }
+        align(tablePageFrame,0,'left',aboveTarget,false);
+        top=JournalLayout.nativeFlowBands(tablePageFrame).bands[0];
+        var aboveDelta=aboveTarget-top.left[top.left.length-1].baseline;
+        if(gapP&&Math.abs(aboveDelta)<.3){
+            gapP.spaceBefore=Number(gapP.spaceBefore)+aboveDelta;
+            d.recompose();
+        }
+        align(below,0,'left',target,false);
+        align(below,0,'right',target,false);
+        var under=JournalLayout.nativeFlowBands(below).bands[0].right;
+        var underDelta=target-under[under.length-1].baseline;
+        if(underDelta>0&&underDelta<.7){
+            for(var gi=1;gi<under.length;gi++){
+                var pp=under[gi].paragraphs[0];
+                if(pp.insertionPoints[0].index!==under[gi].insertionPoints[0].index)continue;
+                var prior=pp.spaceBefore, shape=structure();
+                pp.spaceBefore=Number(prior)+underDelta;
+                d.recompose();
+                if(!body.overflows&&structure()===shape){
+                    var rows=JournalLayout.nativeFlowBands(below).bands[0].right;
+                    if(Math.abs(rows[rows.length-1].baseline-target)<.01)break;
+                }
+                pp.spaceBefore=prior;
+                d.recompose();
+            }
+        }
+
+    var above=JournalLayout.nativeFlowBands(tablePageFrame).bands[0], under=JournalLayout.nativeFlowBands(below).bands[0];
+    var result=[Math.abs(JournalLayout.last(previousPageFrame)-target),Math.abs(JournalLayout.last(right)-target),
+        Math.abs(lastBaseline(above.left)-lastBaseline(above.right)),
+        Math.abs(lastBaseline(under.left)-target),Math.abs(lastBaseline(under.right)-target)];
+    var valid=!body.overflows&&String(body.contents)===text;
+    var finalTable=body.tables.itemByID(tableId);
+    for(var ri=0;ri<finalTable.rows.length;ri++){
+        var ls=finalTable.rows[ri].cells[0].texts[0].lines,f=ls.length?owner(ls[0]):null;
+        if(!f||f.id!==tableFrame.id)valid=false;
+    }
+    for(var j=0;j<result.length;j++)if(!isFinite(result[j])||result[j]>JournalLayout.rules.tolerance)valid=false;
+    if(valid)tablePageFrame.insertLabel('journal-split-table-upper','true');
+    return {status:valid?'accepted':'rejected',page:tablePageFrame.parentPage.name,residualsMm:result,trials:report};
+}

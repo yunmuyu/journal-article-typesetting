@@ -45,7 +45,7 @@ var JournalGapSolver=(function(){
                 ops.push({key:a.key,kind:a.kind,target:a.target,from:a.from,to:to,min:a.min,max:a.max});
                 cost+=Math.abs(to-a.from)*a.costWeight;
             }
-            result.candidates.push({mode:mode,firstFrame:start,lastFrame:targetIndex,capacityMm:capacity,neededMm:need,operations:ops,cost:cost,blockStart:target.nextBlock.startIndex});
+            result.candidates.push({mode:mode,firstFrame:start,lastFrame:targetIndex,capacityMm:capacity,neededMm:need,operations:ops,cost:cost,blockStart:target.nextBlock.startIndex,blockEnd:target.nextBlock.endIndex});
         }
         result.candidates=result.candidates.slice(0,o.maxCandidates);return result;
     }
@@ -53,10 +53,15 @@ var JournalGapSolver=(function(){
         var o=options(c),start=adapter.now(),initial=adapter.measure(),current=initial,decisions=[],visited={},attempts=0,timedOut=false;
         if(initial.hardErrors.length)throw Error('GAP_BASELINE_INVALID '+initial.hardErrors.join(';'));
         for(var bi=0;bi<o.maxBoundaries;bi++){
-            var ti=-1,worst=0;
+            var ti=-1,worst=0,blockingPage=null;
             for(var i=0;i<current.columns.length;i++){
                 var col=current.columns[i],key=col.id+':'+(col.nextBlock?col.nextBlock.startIndex:'none');
+                if(c&&typeof c.throughPageIndex==='number'&&col.pageIndex>c.throughPageIndex)break;
                 var automatic=col.nextBlock&&col.nextBlock.breakControl&&col.nextBlock.breakControl.releasable,priority=automatic?1000000+col.blankMm:col.blankMm;
+                if(c&&c.orderedPages===true&&col.hasLaterContent&&(automatic||col.blankMm>o.maxBlankMm+.05)){
+                    if(blockingPage===null)blockingPage=col.pageIndex;
+                    if(col.pageIndex!==blockingPage)break;
+                }
                 if(col.hasLaterContent&&(automatic||col.blankMm>o.maxBlankMm+.05)&&!visited[key]&&priority>worst){ti=i;worst=priority;}
             }
             if(ti<0)break;
@@ -69,7 +74,7 @@ var JournalGapSolver=(function(){
                 try{
                     adapter.apply(candidate);attempts++;after=adapter.measure();
                     var errors=adapter.validate(baseline,after,candidate);
-                    if(!errors.length&&candidate.mode==='pull'&&!adapter.blockInFrame(candidate.blockStart,col.id))errors.push('block-not-retained');
+                    if(!errors.length&&candidate.mode==='pull'&&!adapter.blockInFrame(candidate.blockStart,col.id,candidate.blockEnd))errors.push('block-not-retained');
                     trial.errors=errors;
                     if(!errors.length){trial.score=score(after,o,candidate.cost);trial.blankMm=after.columns[ti].blankMm;
                         if(better(trial.score,bestScore)){best=candidate;bestScore=trial.score;}}
@@ -81,7 +86,7 @@ var JournalGapSolver=(function(){
                 try{
                     adapter.apply(best);var accepted=adapter.measure(),issues=adapter.validate(baseline,accepted,best);
                     if(issues.length||!better(score(accepted,o,best.cost),score(current,o,0)))throw Error('GAP_REPLAY_NOT_IMPROVED '+issues.join(';'));
-                    if(best.mode==='pull'&&!adapter.blockInFrame(best.blockStart,col.id))throw Error('GAP_REPLAY_BLOCK_NOT_RETAINED');
+                    if(best.mode==='pull'&&!adapter.blockInFrame(best.blockStart,col.id,best.blockEnd))throw Error('GAP_REPLAY_BLOCK_NOT_RETAINED');
                     current=accepted;entry.selected={mode:best.mode,firstFrame:best.firstFrame,lastFrame:best.lastFrame,operations:best.operations,afterBlankMm:current.columns[ti].blankMm};
                 }catch(e){adapter.restore(baseline);entry.replayError=String(e);current=adapter.measure();}
             }

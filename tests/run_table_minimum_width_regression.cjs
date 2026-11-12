@@ -25,6 +25,12 @@ assert.throws(()=>improve(sourceWidths,[7.4,2],()=>{noFeasibleCalls++;return Inf
 assert.ok(noFeasibleCalls<=300,'a table with no feasible column widths terminates');
 const unchanged=Array.from(improve(sourceWidths,[7.4,2],()=>15));
 assert.deepEqual(unchanged,sourceWidths,'equal row height does not make an arbitrary width change');
+const legible=Array.from(improve(sourceWidths,[7.4,2],widths=>
+  widths[0]>=44?{height:16,orphans:0}:{height:15,orphans:1}));
+assert.ok(legible[0]>=44,'removing an actual orphan takes priority over a smaller table');
+const fewerWraps=Array.from(improve(sourceWidths,[7.4,2],widths=>
+  ({height:15,orphans:0,lines:widths[0]>=44?3:4})));
+assert.ok(fewerWraps[0]>=44,'at the same height and orphan count choose fewer wraps');
 let boundedCalls=0;
 improve(Array(8).fill(85.5/8),Array(8).fill(2),()=>1000-++boundedCalls);
 assert.ok(boundedCalls<=300,'native recompose search remains bounded for wide tables');
@@ -47,7 +53,7 @@ nativeContext.JournalArticleAssembly.optimizeNativeTable(nativeDocument,measured
   {widths:[1000,1000],rows:[[{start:0,span:1},{start:1,span:1}]]});
 assert.equal(measuredTable.columns[0].width>=57,true,'native row heights choose the final widths');
 assert.equal(measuredTable['journal-table-kind'],'ordinary');
-const overflowCells=[{overflows:false}];
+const overflowCells=[{overflows:false,texts:[{lines:[]}]}];
 const overflowTable={columns:[{width:42.75},{width:42.75}],rows:[{height:10}],cells:overflowCells};
 const overflowDoc={recompose(){overflowCells[0].overflows=overflowTable.columns[0].width<50;}};
 nativeContext.JournalArticleAssembly.optimizeNativeTable(overflowDoc,overflowTable,[['a','b']],
@@ -59,4 +65,19 @@ assert.throws(()=>nativeContext.JournalArticleAssembly.optimizeNativeTable(overf
   {widths:[1,1],rows:[[{start:0,span:1},{start:1,span:1}]]}),/TABLE_WIDTH_NO_FEASIBLE/);
 assert.deepEqual(overflowTable.columns.map(c=>c.width),[42.75,42.75],
   'no-feasible-width failure rolls all native columns back');
+const formulaTable={label:'source-table-2',columns:[{width:42.75},{width:42.75}],rows:[{height:10}]};
+const formulaCell=(column,width)=>({
+  columnSpan:1,parentColumn:{index:column},leftInset:.5,rightInset:.5,overflows:false,
+  get width(){return formulaTable.columns[column].width;},
+  texts:[{lines:[],allPageItems:[{label:'source-formula-'+column,geometricBounds:[0,0,4,width]}]}]
+});
+formulaTable.cells=[formulaCell(0,49),formulaCell(1,32)];
+const formulaStructure={widths:[1,1],rows:[[{start:0,span:1},{start:1,span:1}]]};
+nativeContext.JournalArticleAssembly.optimizeNativeTable({recompose(){}},formulaTable,[['a','b']],formulaStructure);
+assert.ok(formulaTable.columns[0].width>=50.02-.001,'formula and both insets fit even without a native overflow flag');
+assert.ok(formulaTable.columns[1].width>=33.02-.001);
+formulaTable.cells=[formulaCell(0,55),formulaCell(1,36)];
+const beforeCapacity=formulaTable.columns.map(c=>c.width);
+assert.throws(()=>nativeContext.JournalArticleAssembly.optimizeNativeTable({recompose(){}},formulaTable,[['a','b']],formulaStructure),/TABLE_FORMULA_WIDTH_CAPACITY/);
+assert.deepEqual(formulaTable.columns.map(c=>c.width),beforeCapacity);
 console.log('PASS two-CJK table cells receive a usable minimum column width while total table width stays fixed');

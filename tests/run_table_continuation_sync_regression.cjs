@@ -73,4 +73,51 @@ assert.equal(items.length,2);assert(items.some(x=>x.label==='journal-continued-s
 assert(items.some(x=>x.label==='journal-continued-source-table-1-99'),'a same-number table with a foreign frame is not cleaned');
 a.textFramePreferences.textColumnCount=2;
 assert.throws(()=>rules.continuedTableFragments(d),/CONTINUATION_MULTICOLUMN_UNSUPPORTED/);
+a.textFramePreferences.textColumnGutter=7;
+a.geometricBounds=[26,17.5,110,195.5];
+const nativeCell=x=>({texts:[{lines:[{horizontalOffset:x,insertionPoints:[{parentTextFrames:[a]}]}]}]});
+const nativeTable={label:'source-table-2',width:85.5,rows:[{cells:[nativeCell(25)]},{cells:[nativeCell(115)]}]};
+body.tables=[nativeTable];
+assert.equal(rules.continuedTableFragments(d,true)[0].key,'journal-continued-source-table-2-1-right');
+assert(rules.continuedTableIssues(d,true).some(s=>s.includes('native-column continuation')));
+assert.throws(()=>rules.continuedTableFragments(d,'wide'),/CONTINUATION_MULTICOLUMN_UNSUPPORTED/);
+nativeTable.rows[1].cells=[nativeCell(32)];
+assert.equal(rules.continuedTableFragments(d,'wide').length,0,'an intact single-column table requires no continuation');
+nativeTable.width=178;
+assert.equal(rules.continuedTableFragments(d,true).length,0,'a full-width table is one segment in a two-column frame');
+b.textFramePreferences.textColumnCount=2;
+b.textFramePreferences.textColumnGutter=7;
+b.geometricBounds=[26,17.5,110,195.5];
+b.lines=[];
+nativeTable.rows[1].cells=[{texts:[{lines:[{horizontalOffset:25,baseline:33,insertionPoints:[{parentTextFrames:[b]}]}]}]}];
+assert.equal(rules.continuedTableFragments(d,'wide')[0].key,'journal-continued-source-table-2-2');
+b.lines=[{baseline:29,contents:'正文在续表前'}];
+assert.throws(()=>rules.continuedTableFragments(d,'wide'),/CONTINUATION_WIDE_NOT_AT_FRAME_START/);
+b.lines=[];items=[];
+for(const firstDataRows of [3,7]){
+ const dataRows=Array.from({length:firstDataRows+2},(_,i)=>({
+  keepWithNextRow:false,
+  cells:[cell([i===firstDataRows+1?b:a])]
+ }));
+ const continuedTable={label:'source-table-3',width:177.9,headerRowCount:1,rows:dataRows};
+ body.tables=[continuedTable];
+ result=rules.syncContinuedTables(d,library,'wide');
+ assert.equal(result.keptTailRows,0);
+ assert.equal(result.markers,1);
+ assert.equal(dataRows[firstDataRows].keepWithNextRow,false,'a single complete continuation row preserves the split');
+ assert.equal(rules.continuedTableIssues(d,true).length,0);
+ const mergedCell=dataRows[firstDataRows].cells[0];
+ mergedCell.parentRow={index:firstDataRows};
+ mergedCell.rowSpan=2;
+ assert(rules.continuedTableIssues(d,true).some(s=>s.includes('merged-row-boundary')));
+ assert.throws(()=>rules.syncContinuedTables(d,library,'wide'),/merged-row-boundary/);
+ mergedCell.rowSpan=1;
+ dataRows[firstDataRows+1].cells=[cell([a,b])];
+ assert(rules.continuedTableIssues(d,true).some(s=>s.includes('split-data-row')));
+ assert.throws(()=>rules.syncContinuedTables(d,library,'wide'),/split-data-row/);
+ dataRows[firstDataRows+1].cells=[cell([b])];
+ continuedTable.footerRowCount=1;
+ assert(rules.continuedTableIssues(d,true).some(s=>s.includes('data-row-minimum')),'a footer-only continuation has no complete data row');
+ assert.throws(()=>rules.syncContinuedTables(d,library,'wide'),/data-row-minimum/);
+}
 console.log('PASS sync behavior: repeat, migration, obsolete cleanup, space restoration, single-cell split, rollback, oscillation and scope protection');

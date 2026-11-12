@@ -32,21 +32,45 @@ var JournalFrontmatter = (function () {
         return {leading:Number(style.leading), spaceBefore:Number(style.spaceBefore), spaceAfter:Number(style.spaceAfter)};
     }
 
-    function affiliationBoundary(text) {
-        var match=String(text).match(/;[ \t\n]*2[.．]\s*/);
-        if(!match||!/^\s*\(?1[.．]/.test(String(text)))return null;
-        return {start:match.index+1,length:match[0].indexOf('2')-1};
-    }
-    function separateAffiliations(p) {
-        var boundary=affiliationBoundary(p.contents);
-        if(!boundary)return false;
-        var separator=String(p.contents).substr(boundary.start,boundary.length);
-        if(separator!=='\n'){
-            if(boundary.length)p.characters.itemByRange(boundary.start,boundary.start+boundary.length-1).contents='\n';
-            else p.insertionPoints[boundary.start].contents='\n';
+    function affiliationBoundaries(text) {
+        if(!/^\s*[（(]?\s*1[.．]/.test(text))return [];
+        var pattern=/[;；]([ \t\n]*)([0-9]+)[.．]/g, boundaries=[], match;
+        while((match=pattern.exec(text))){
+            if(Number(match[2])!==boundaries.length+2)return [];
+            boundaries.push({start:match.index+1,separator:match[1]});
         }
-        p.tracking=0;p.horizontalScale=100;
-        return true;
+        return boundaries;
+    }
+    function affiliationBoundary(text) {
+        var first=affiliationBoundaries(String(text))[0];
+        return first?{start:first.start,length:first.separator.length}:null;
+    }
+    function affiliationBreaksMatchLines(p) {
+        var boundaries=affiliationBoundaries(String(p.contents)), forced=0;
+        for(var i=0;i<boundaries.length;i++){
+            if(boundaries[i].separator.indexOf('\n')>=0)forced++;
+        }
+        return forced===0||(forced===boundaries.length&&p.lines.length===boundaries.length+1);
+    }
+    function separateAffiliations(document,p) {
+        var boundaries=affiliationBoundaries(String(p.contents)), count=p.lines.length;
+        if(!boundaries.length||count!==boundaries.length+1)return false;
+        function replace(start,length,value){
+            if(length)p.characters.itemByRange(start,start+length-1).contents=value;
+            else p.insertionPoints[start].contents=value;
+        }
+        var edited=[];
+        for(var i=boundaries.length-1;i>=0;i--){
+            var boundary=boundaries[i];
+            if(boundary.separator==='\n')continue;
+            replace(boundary.start,boundary.separator.length,'\n');
+            edited.push(boundary);
+        }
+        document.recompose();
+        if(p.lines.length===count)return edited.length>0;
+        for(var j=edited.length-1;j>=0;j--)replace(edited[j].start,1,edited[j].separator);
+        document.recompose();
+        return false;
     }
     function planEnglishTitle(lineCount, config) {
         lineCount = Math.max(1, Math.floor(number(lineCount, "englishTitle.lineCount")));
@@ -173,13 +197,24 @@ var JournalFrontmatter = (function () {
         for (i = 0; i < entries.length; i++) text.push(String(entries[i].text || ""));
         if(frame.parentStory.textContainers.length!==1)throw Error("FRONTMATTER_THREADED_STORY");
         frame.parentStory.contents = text.join("\r");
+        // The replacement may inherit character styles from the old story.
+        // Clear those styles before applying source positions and role formatting.
+        frame.parentStory.appliedCharacterStyle = document.characterStyles[0];
         for (i = 0; i < entries.length; i++) {
             var entry = entries[i], paragraph = frame.parentStory.paragraphs[i];
             if (!paragraph) throw Error("FRONTMATTER_PARAGRAPH " + i);
             var styleName = styleMap && styleMap[entry.role];
+            if(!styleName&&entry.role==="cnSubtitle")styleName="开头部分/副标题";
+            if(!styleName&&entry.role==="enSubtitle")styleName="开头部分/英文副标题";
             var style = resolveStyle(document, styleName);
             if (style) paragraph.applyParagraphStyle(style, true);
+            if(entry.role==='enAbstract'||entry.role==='enKeywords'){
+                paragraph.properties={appliedFont:app.fonts.itemByName('现 宋体-1'),pointSize:9,leading:13};
+            }
             applyRuns(paragraph, entry.runs || []);
+            if(entry.role==="cnSubtitle"&&/^——/.test(entry.text)){
+                paragraph.characters.itemByRange(0,1).appliedFont=app.fonts.itemByName("楷体");
+            }
             if (entry.role === "classification") normalizeClassification(paragraph);
             if (entry.role === "fund") {
                 paragraph.justification = Justification.LEFT_JUSTIFIED;
@@ -194,7 +229,13 @@ var JournalFrontmatter = (function () {
                 if (colon < 0) throw Error("FRONTMATTER_LABEL " + entry.role);
                 var targetFont = app.fonts.itemByName(labelFont);
                 if (!targetFont.isValid || targetFont.status !== FontStatus.INSTALLED) throw Error("FRONTMATTER_LABEL_FONT " + labelFont);
-                paragraph.characters.itemByRange(0, colon).appliedFont = targetFont;
+                var label=paragraph.characters.itemByRange(0, colon);
+                var labelStyleName=entry.role==='enAbstract'||entry.role==='enKeywords'?'英文黑体':entry.role==='cnAbstract'||entry.role==='cnKeywords'?'黑体':null;
+                if(labelStyleName){
+                    var labelStyle=document.characterStyles.itemByName(labelStyleName);
+                    if(labelStyle.isValid)label.applyCharacterStyle(labelStyle,false);
+                }
+                label.appliedFont = targetFont;
             }
             pushLog(log, "PARAGRAPH_ROLE", {index: i, role: String(entry.role)});
         }
@@ -252,11 +293,14 @@ var JournalFrontmatter = (function () {
     }
 
     function fitFooter(frame, anchor) {
-        frame.fit(FitOptions.FRAME_TO_CONTENT);
-        var height = frameHeight(frame);
+        var bounds=copyBounds(frame.geometricBounds);
         var bottom = number(anchor.bottom, "footerAnchor.bottom");
         var left = number(anchor.left, "footerAnchor.left");
-        frame.geometricBounds = [bottom - height, left, bottom, left + number(anchor.width, "footerAnchor.width")];
+        var right = left + number(anchor.width, "footerAnchor.width");
+        frame.geometricBounds = [bounds[0],left,bounds[2],right];
+        frame.fit(FitOptions.FRAME_TO_CONTENT);
+        var height = frameHeight(frame);
+        frame.geometricBounds = [bottom - height, left, bottom, right];
     }
 
     function applyTitleSpacing(document, frame, entries, config, log) {
@@ -268,6 +312,7 @@ var JournalFrontmatter = (function () {
         }
         for (i = 0; i < entries.length; i++) if (entries[i].role === "cnAffiliation") {
             var cnUnit = frame.parentStory.paragraphs[i];
+            separateAffiliations(document,cnUnit);
             if(cnUnit.lines.length>1){
                 var lastUnitLeading=cnUnit.lines[-1].leading;
                 for (var ci = 0; ci < cnUnit.lines.length-1; ci++) cnUnit.lines[ci].characters.everyItem().leading = 15;
@@ -277,10 +322,18 @@ var JournalFrontmatter = (function () {
         if (titleIndex < 0) return;
         var paragraph = frame.parentStory.paragraphs[titleIndex];
         var style = paragraph.appliedParagraphStyle;
+        var hasSubtitle=entries[titleIndex+1]&&entries[titleIndex+1].role==="enSubtitle";
         paragraph.spaceBefore = style.spaceBefore;
         paragraph.spaceAfter = style.spaceAfter;
-        var plan = planEnglishTitle(paragraph.lines.length, config);
-        for (i = 0; i < paragraph.lines.length; i++) {var lineLeading=plan.lineLeadings[i];if(i===paragraph.lines.length-1)lineLeading=Number(style.leading);paragraph.lines[i].characters.everyItem().leading=lineLeading;}
+        var plan = planEnglishTitle(paragraph.lines.length, {
+            enTitleUpperLeadingPt: hasSubtitle ? 17 : (config.enTitleUpperLeadingPt === undefined ? 17 : config.enTitleUpperLeadingPt),
+            enTitleLastLeadingPt: hasSubtitle ? 17 : Number(style.leading),
+            enTitleAuthorBaselineGapPt: config.enTitleAuthorBaselineGapPt
+        });
+        for (i = 0; i < paragraph.lines.length; i++) paragraph.lines[i].characters.everyItem().leading=plan.lineLeadings[i];
+        if(hasSubtitle&&String(paragraph.characters[-1].contents)==="\r"){
+            paragraph.characters[-1].leading=style.leading;
+        }
         if (authorIndex >= 0) {
             var author = frame.parentStory.paragraphs[authorIndex], authorStyle = author.appliedParagraphStyle;
             author.leading = authorStyle.leading;
@@ -289,8 +342,9 @@ var JournalFrontmatter = (function () {
         }
         for (i = 0; i < entries.length; i++) if (entries[i].role === "enAffiliation") {
             var unit = frame.parentStory.paragraphs[i], unitStyle = unit.appliedParagraphStyle;
-            separateAffiliations(unit);
             unit.properties = englishStyleContract("enAffiliation", unitStyle);
+            document.recompose();
+            separateAffiliations(document,unit);
             for (var ui = 0; ui + 1 < unit.lines.length; ui++) unit.lines[ui].characters.everyItem().leading = 15;
             unit.spaceBefore = unitStyle.spaceBefore;
             unit.spaceAfter = unitStyle.spaceAfter;
@@ -314,6 +368,14 @@ var JournalFrontmatter = (function () {
             if(config.preserveExistingParagraphs!==true){
                 writeParagraphs(document, front, data.front, config.styleMap || {}, log);
                 writeParagraphs(document, footer, data.footer, config.styleMap || {}, log);
+                if(config.enAbstractTracking){
+                    for(var abstractIndex=0;abstractIndex<data.front.length;abstractIndex++){
+                        if(data.front[abstractIndex].role==='enAbstract'){
+                            front.parentStory.paragraphs[abstractIndex].tracking=config.enAbstractTracking;
+                            break;
+                        }
+                    }
+                }
             }
             trimEnd(front);
             trimEnd(footer);
@@ -321,6 +383,22 @@ var JournalFrontmatter = (function () {
             fitFront(front, config.frontAnchor);
             fitFooter(footer, config.footerAnchor);
             document.recompose();
+            if (config.preserveExistingParagraphs !== true && data.front) {
+                for (var titleIndex=0;titleIndex<data.front.length;titleIndex++) {
+                    if (data.front[titleIndex].role !== 'cnTitle') continue;
+                    var titleTrial=fitSingleCharacterTitle(document,front.parentStory.paragraphs[titleIndex]);
+                    if(titleTrial)pushLog(log,'CN_TITLE_TRACKING',titleTrial);
+                    var title=front.parentStory.paragraphs[titleIndex];
+                    if(title.lines.length===2){
+                        title.lines[0].characters.everyItem().leading=24;
+                        document.recompose();
+                    }
+                    if(data.front[titleIndex+1]&&data.front[titleIndex+1].role==='cnSubtitle'){
+                        title.lines[title.lines.length-1].characters.everyItem().leading=26;
+                    }
+                    break;
+                }
+            }
             applyTitleSpacing(document, front, data.front, config, log);
             fitFront(front, config.frontAnchor);
             document.recompose();
@@ -371,8 +449,40 @@ var JournalFrontmatter = (function () {
         }
     }
 
+    function fitSingleCharacterTitle(document, paragraph) {
+        document.recompose();
+        if (paragraph.lines.length !== 2 ||
+            !/^(?:[\u3400-\u9fff\uf900-\ufaff]|[\ud840-\ud88f][\udc00-\udfff])$/.test(meaningful(paragraph.lines[1].contents))) return null;
+        var ranges=paragraph.textStyleRanges.everyItem().getElements(),current=Number(paragraph.tracking);
+        if (!isFinite(current)||Math.abs(current)>20) return null;
+        for(var i=0;i<ranges.length;i++)if(Number(ranges[i].tracking)!==current)return null;
+        var accepted=false,text=String(paragraph.contents);
+        try{
+            for(var offset=1;current-offset>=-20;offset++){
+                paragraph.tracking=current-offset;
+                document.recompose();
+                if(paragraph.lines.length===1&&String(paragraph.contents)===text&&meaningful(paragraph.lines[0].contents)===meaningful(text)){
+                    accepted=true;
+                    return {from:current,to:current-offset};
+                }
+            }
+            for(var increase=1;current+increase<=20;increase++){
+                paragraph.tracking=current+increase;
+                document.recompose();
+                if(paragraph.lines.length===2&&meaningful(paragraph.lines[1].contents).replace(/[\s。、，；：！？]/g,'').length>=2&&String(paragraph.contents)===text){
+                    accepted=true;
+                    return {from:current,to:current+increase};
+                }
+            }
+            return null;
+        }finally{
+            if(!accepted){paragraph.tracking=current;document.recompose();}
+        }
+    }
+
     function refitExistingFront(document, front, bodyFrames, topGuide) {
         var before = copyBounds(front.geometricBounds);
+        document.recompose();
         front.fit(FitOptions.FRAME_TO_CONTENT);
         var fitted = copyBounds(front.geometricBounds);
         front.geometricBounds = [before[0], before[1], before[0] + fitted[2] - fitted[0], before[3]];
@@ -398,7 +508,10 @@ var JournalFrontmatter = (function () {
     }
 
     return {
+        writeParagraphs: writeParagraphs,
+        fitSingleCharacterTitle: fitSingleCharacterTitle,
         affiliationBoundary: affiliationBoundary, separateAffiliations: separateAffiliations,
+        affiliationBreaksMatchLines: affiliationBreaksMatchLines,
         refitExistingFront: refitExistingFront,
         classificationPlan: classificationPlan,
         normalizeClassification: normalizeClassification,

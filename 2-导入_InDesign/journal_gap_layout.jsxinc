@@ -41,7 +41,8 @@ var JournalGapLayout=(function(){
             var ls=linesOf(nextFrame);if(!ls.length)return {startIndex:-1,kind:'unknown',minimumAdvanceMm:Infinity};
             var line=ls[0],p=line.paragraphs[0],first=line.insertionPoints[0].index,anchorBaseline=-1e9,advance=0,bottom=-1e9,kind=role(p),maxLines=1,baseLine=0;
             for(var pi=0;pi<p.lines.length;pi++)if(p.lines[pi].insertionPoints[0].index===first){baseLine=pi;break;}
-            if(p.keepAllLinesTogether)maxLines=p.lines.length;else maxLines=Math.min(p.lines.length,Math.max(1,Number(p.keepFirstLines)));
+            var completeParagraph=(kind==='body'||kind==='reference'||kind==='bio')&&first===p.index;
+            if(completeParagraph||p.keepAllLinesTogether)maxLines=p.lines.length;else maxLines=Math.min(p.lines.length,Math.max(1,Number(p.keepFirstLines)));
             for(var ch=0;ch<line.characters.length;ch++){anchorBaseline=Math.max(anchorBaseline,Number(line.characters[ch].baseline));advance=Math.max(advance,Number(line.characters[ch].leading)*MM);}
             var end=first;
             for(var li=baseLine;li<Math.min(p.lines.length,baseLine+maxLines);li++){bottom=Math.max(bottom,bottomOfLine(p.lines[li]));end=p.lines[li].insertionPoints[-1].index;}
@@ -56,7 +57,7 @@ var JournalGapLayout=(function(){
                 if(os[oi].anchor<line.insertionPoints[-1].index)advance=Math.max(advance,os[oi].bounds[2]-os[oi].bounds[0]);
                 if(/^source-formula-/.test(os[oi].label))kind='formula';else if(/^source-figure-/.test(os[oi].label))kind='figure';
             }
-            return {startIndex:first,paragraphStart:p.index,kind:kind,breakControl:breakControl(body,p,c),keepAllLinesTogether:p.keepAllLinesTogether,minimumAdvanceMm:Math.max(0,advance+bottom-anchorBaseline),leadingAdvanceMm:advance};
+            return {startIndex:first,endIndex:completeParagraph?p.insertionPoints[-1].index-1:null,paragraphStart:p.index,kind:kind,breakControl:breakControl(body,p,c),keepAllLinesTogether:p.keepAllLinesTogether,minimumAdvanceMm:Math.max(0,advance+bottom-anchorBaseline),leadingAdvanceMm:advance};
         }
         function measure(){
             var os=objects(),columns=[],hard=[],lineBoxes=[],lastUsed=-1,seen={};
@@ -77,7 +78,20 @@ var JournalGapLayout=(function(){
                         if(!seen[key]){seen[key]=true;adjustments.push({key:key,kind:'leading',target:{start:rec.start,end:rec.end-1},from:rec.leading,min:min,max:max,downMm:(rec.leading-min)*MM,upMm:(max-rec.leading)*MM,costWeight:MM});}
                     }
                 }
-                for(var oi=0;oi<os.length;oi++){var object=items[oi],owners=object.parent.parentTextFrames;if(owners.length&&owners[0].id===frame.id)bottom=Math.max(bottom,os[oi].bounds[2]);}
+                for(var oi=0;oi<os.length;oi++){
+                    var object=items[oi],owners=object.parent.parentTextFrames;
+                    if(!owners.length||owners[0].id!==frame.id)continue;
+                    bottom=Math.max(bottom,os[oi].bounds[2]);
+                    var graphic=object.allGraphics&&object.allGraphics.length===1?object.allGraphics[0]:null;
+                    if(c.allowBitmapScale===true&&/^source-figure-/.test(object.label)&&graphic&&graphic.itemLink&&
+                       /\.(?:png|jpe?g|tiff?|bmp)$/i.test(graphic.itemLink.name)){
+                        var original=Number(object.extractLabel('journal-gap-original-bitmap-scale'))||Number(graphic.absoluteHorizontalScale);
+                        var scale=Number(graphic.absoluteHorizontalScale),minimum=original*.97,height=os[oi].bounds[2]-os[oi].bounds[0];
+                        if(scale>minimum+.001&&Math.abs(scale-Number(graphic.absoluteVerticalScale))<.001){
+                            adjustments.push({key:'bitmap:'+object.id,kind:'bitmap',target:{index:oi,original:original},from:scale,min:minimum,max:scale,downMm:height*(scale-minimum)/scale,upMm:0,costWeight:height/scale});
+                        }
+                    }
+                }
                 columns.push({id:frame.id,index:fi,pageIndex:page.documentOffset,pageName:String(page.name),bounds:gb,endpoint:endpoint,occupiedBottomMm:bottom,blankMm:Math.max(0,gb[2]-bottom),adjustments:adjustments});
             }
             for(var ti=0;ti<tables.length;ti++)for(var ri=0;ri<tables[ti].rows.length;ri++){
@@ -123,6 +137,11 @@ var JournalGapLayout=(function(){
         function breakState(){var a=[];for(var n=0;n<body.paragraphs.length;n++)a.push({index:body.paragraphs[n].index,value:body.paragraphs[n].startParagraph});return a;}
         function paragraphAt(index){for(var n=0;n<body.paragraphs.length;n++)if(body.paragraphs[n].index===index)return body.paragraphs[n];throw Error('GAP_BREAK_PARAGRAPH_CHANGED');}
         function snapshot(state){return {frameBounds:currentFrameBounds(),breakLabel:body.extractLabel('journal-auto-column-breaks'),breaks:breakState(),leading:leadingSpans(),rows:rowState(),state:state||measure(),text:String(body.contents),signature:signature()};}
+        function bitmapScale(object,scale){
+            var graphic=object.allGraphics[0];
+            graphic.absoluteHorizontalScale=scale;graphic.absoluteVerticalScale=scale;
+            object.fit(FitOptions.FRAME_TO_CONTENT);
+        }
         function apply(candidate){
             activeOperations=[];
             for(var n=0;n<candidate.operations.length;n++){
@@ -132,6 +151,12 @@ var JournalGapLayout=(function(){
                 else if(op.kind==='column-break'){releaseAutomaticBreak(body,paragraphAt(op.target.paragraphStart),c);}
                 else if(op.kind==='leading')body.characters.itemByRange(op.target.start,op.target.end).leading=op.to;
                 else if(op.kind==='row'){var row=tables[op.target.table].rows[op.target.row];row.minimumHeight=op.to;row.height=op.to;}
+                else if(op.kind==='bitmap'){
+                    var object=items[op.target.index];
+                    op.previousScaleLabel=object.extractLabel('journal-gap-original-bitmap-scale');
+                    object.insertLabel('journal-gap-original-bitmap-scale',String(op.target.original));
+                    bitmapScale(object,op.to);
+                }
                 else throw Error('GAP_ADJUSTMENT_KIND');
             }
             d.recompose();
@@ -144,6 +169,11 @@ var JournalGapLayout=(function(){
                 else if(op.kind==='column-break'){for(var bi=0;bi<saved.breaks.length;bi++)if(saved.breaks[bi].index===op.target.paragraphStart)paragraphAt(op.target.paragraphStart).startParagraph=saved.breaks[bi].value;}
                 else if(op.kind==='leading')for(var n=0;n<saved.leading.length;n++){var span=saved.leading[n],start=Math.max(span.start,op.target.start),end=Math.min(span.end,op.target.end);if(start<=end)body.characters.itemByRange(start,end).leading=span.value;}
                 else if(op.kind==='row')for(n=0;n<saved.rows.length;n++){var r=saved.rows[n];if(r.table===op.target.table&&r.row===op.target.row){var row=tables[r.table].rows[r.row];row.autoGrow=r.autoGrow;row.minimumHeight=r.min;row.height=r.height;}}
+                else if(op.kind==='bitmap'){
+                    var object=items[op.target.index];
+                    bitmapScale(object,op.from);
+                    object.insertLabel('journal-gap-original-bitmap-scale',op.previousScaleLabel||'');
+                }
             }
             d.recompose();
             if(String(body.contents)!==saved.text)throw Error('GAP_ROLLBACK_TEXT_CHANGED');
@@ -162,7 +192,13 @@ var JournalGapLayout=(function(){
             return errors;
         }
         return {now:function(){return new Date().getTime();},measure:measure,snapshot:snapshot,apply:apply,restore:restore,validate:validate,
-            blockInFrame:function(index,id){var f=body.insertionPoints[index].parentTextFrames;return f.length&&f[0].id===id;}};
+            blockInFrame:function(index,id,end){
+                var f=body.insertionPoints[index].parentTextFrames;
+                if(!f.length||f[0].id!==id)return false;
+                if(end===null||end===undefined)return true;
+                var tail=body.insertionPoints[end].parentTextFrames;
+                return tail.length&&tail[0].id===id;
+            }};
     }
     function measure(d,c){return adapter(d,c).measure();}
     function solve(d,c){var body=bodyOf(d,c||{}),fixed=0;for(var i=0;i<body.paragraphs.length;i++){var p=body.paragraphs[i];if(role(p)==='referenceTitle'&&Number(p.keepWithNext)<1){p.keepWithNext=1;fixed++;}}if(fixed)d.recompose();var result=JournalGapSolver.solve(adapter(d,c),c&&c.gapSolver);result.referenceHeadingsNormalized=fixed;return result;}

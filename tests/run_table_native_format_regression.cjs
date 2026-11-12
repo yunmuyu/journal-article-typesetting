@@ -3,7 +3,7 @@ const path=require('node:path');
 const vm=require('node:vm');
 const assert=require('node:assert/strict');
 const context=vm.createContext({
-  Justification:{CENTER_ALIGN:'center'},VerticalJustification:{CENTER_ALIGN:'middle'},
+  Justification:{CENTER_ALIGN:'center',LEFT_ALIGN:'left'},VerticalJustification:{CENTER_ALIGN:'middle'},
   RowTypes:{HEADER_ROW:'header'}
 });
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_layout_rules.jsxinc'),'utf8'),context);
@@ -75,6 +75,43 @@ const mixedStructure={widths:[1],headerRows:0,rows:[[{start:0,span:1}],[{start:0
 assert.deepEqual(Array.from(rules.sourceDecimalColumns([['1.2'],['12.3'],['12']],mixedStructure)),[0],
   'an integer must not hide a decimal column that needs review');
 const decimalFrame={geometricBounds:[0,10,20,30]};
+function measuredNumber(value,index,width=12){
+  const cell=makeCell('right');
+  cell.properties.leftInset=cell.properties.rightInset=.5;
+  const text=cell.texts[0];
+  const p={justification:'right',leftIndent:0,rightIndent:0,firstLineIndent:0};
+  Object.defineProperty(p,'properties',{set(values){Object.assign(p,values);}});
+  const point=i=>({parentTextFrames:[decimalFrame],get horizontalOffset(){return 20+p.leftIndent+i*2;}});
+  cell.contents=value;
+  cell.width=width;
+  cell.parentRow={index};
+  cell.parentColumn={index:0};
+  text.paragraphs=[p];
+  text.lines=[{}];
+  text.characters=Array.from(value,(_,i)=>point(i));
+  text.insertionPoints=Array.from({length:value.length+1},(_,i)=>point(i));
+  return cell;
+}
+const varied=['5.41','32.12','0'].map((value,index)=>measuredNumber(value,index));
+const variedTable={label:'source-table-6',headerRowCount:0,cells:varied,
+  columns:[{width:12,cells:varied}],rows:varied.map(cell=>({cells:[cell],autoGrow:true,height:5,minimumHeight:5}))};
+assert.deepEqual(Array.from(rules.alignTableDecimals({recompose(){}},variedTable)),[0]);
+assert.deepEqual(varied.map(cell=>cell.contents),['5.41','32.12','0']);
+assert(!Array.from(rules.tableNativeIssues(variedTable)).some(issue=>issue.code.startsWith('TABLE_DECIMAL')));
+const cramped=['5.41','32.12','0'].map((value,index)=>measuredNumber(value,index,7));
+const crampedTable={...variedTable,cells:cramped,columns:[{width:7,cells:cramped}]};
+assert.deepEqual(Array.from(rules.alignTableDecimals({recompose(){}},crampedTable)),[]);
+assert(cramped.every(cell=>cell.texts[0].paragraphs[0].justification==='right'&&cell.texts[0].paragraphs[0].leftIndent===0));
+const sameShape=['20.0','19.5'].map((value,index)=>{
+  const c=makeCell('left');c.contents=value;c.parentRow={index};c.parentColumn={index:0};
+  return c;
+});
+const sameShapeTable={label:'source-table-5',headerRowCount:0,
+  rows:sameShape.map(cell=>({minimumHeight:5,height:5,autoGrow:true,cells:[cell]})),
+  cells:sameShape,columns:[{width:85.5,cells:sameShape}]};
+assert(Array.from(rules.tableNativeIssues(sameShapeTable)).some(issue=>issue.code==='TABLE_HORIZONTAL_ALIGN'));
+rules.normalizeOrdinaryTables([sameShapeTable],{tableKinds:[{number:5,kind:'ordinary'}]});
+assert(sameShape.every(cell=>cell.texts[0].justification==='center'));
 const decimalCells=['1.2','12.3'].map((value,index)=>{
   const c=makeCell('right');c.contents=value;c.parentRow={index};c.parentColumn={index:0};
   c.texts[0].justification='right';c.texts[0].paragraphs=[{justification:'right',rightIndent:1.2}];
@@ -112,3 +149,16 @@ vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journa
 for(const kind of ['unclassified','algorithm','three-line'])
   assert.throws(()=>assemblyContext.JournalArticleAssembly.table(null,null,null,null,{kind}),/TABLE_KIND_UNSUPPORTED/);
 console.log('PASS ordinary table native format restore, algorithm preservation, and unclassified preflight');
+
+const tallFormulaCell = makeCell('center');
+tallFormulaCell.properties.topInset = .5;
+tallFormulaCell.properties.bottomInset = .5;
+tallFormulaCell.texts[0].lines[0].allPageItems = [
+    {label: 'source-formula-91', geometricBounds: [0, 0, 9.0754, 5]}
+];
+const formulaRow = {minimumHeight: 5, height: 10.0754, autoGrow: true, cells: [tallFormulaCell]};
+const formulaTable = {columns: [{width: 20}], cells: [tallFormulaCell], rows: [formulaRow]};
+assert(!rules.tableNativeIssues(formulaTable).some(issue => issue.code === 'TABLE_HEIGHT'));
+formulaRow.height = 12;
+assert(rules.tableNativeIssues(formulaTable).some(issue => issue.code === 'TABLE_HEIGHT'));
+console.log('PASS table formula height is measured without allowing extra row padding');

@@ -1,14 +1,20 @@
 const fs=require('fs'),p=require('path'),vm=require('vm'),assert=require('node:assert/strict');
 const root=p.resolve(__dirname,'../2-导入_InDesign');
-const ctx={Position:{NORMAL:0,SUPERSCRIPT:1,SUBSCRIPT:2},FontStatus:{INSTALLED:1},app:{fonts:{itemByName:n=>({name:n,isValid:true,status:1}),everyItem:()=>({getElements:()=>[{name:'Times New Roman\\tItalic',fontFamily:'Times New Roman',postscriptName:'TimesNewRomanPS-ItalicMT',status:1}]})}}};vm.createContext(ctx);
+const ctx={Position:{NORMAL:0,SUPERSCRIPT:1,SUBSCRIPT:2},FontStatus:{INSTALLED:1},app:{fonts:{itemByName:n=>({name:n,isValid:true,status:1}),everyItem:()=>({getElements:()=>[{name:'Times New Roman\tItalic',fontFamily:'Times New Roman',postscriptName:'TimesNewRomanPS-ItalicMT',status:1}]})}}};vm.createContext(ctx);
 for(const name of ['journal_layout_rules.jsxinc','journal_frontmatter.jsxinc','journal_article_assembly.jsxinc'])vm.runInContext(fs.readFileSync(p.join(root,name),'utf8'),ctx);
 const R=ctx.JournalLayout;
 assert.equal(R.formulaPlacementAllowed({kind:'formula'},{}),false);
 assert.equal(R.formulaPlacementAllowed({kind:'formula',placement:'native-vector'},{}),true);
 assert.equal(R.formulaPlacementAllowed({kind:'formula'},{legacyRegressionFixture:true}),true);
 assert.equal(R.forbiddenLineStart('，接续文字'),true);assert.equal(R.forbiddenLineStart('\t，'),true);assert.equal(R.forbiddenLineStart('\uFFFC，'),false);
+assert.equal(R.forbiddenLineStart(':root{',true),false);
+assert.equal(R.forbiddenLineStart(':root{',false),true);
+assert.equal(R.forbiddenLineStart('：普通正文',true),true);
 assert.equal(R.sourceProjection('f ⟦EQ-003⟧ φ_i').text,'fφ_i');
-const text='式中，f为输入；\uFFFCΩ为积分域。\r',chars=Array.from(text).map(contents=>({contents,position:0,fontStyle:'Regular'}));
+const text='式中，f为输入；\uFFFCΩ为积分域。\r',chars=Array.from(text).map(contents=>({
+  contents,position:0,fontStyle:'Regular',appliedFont:{name:'宋体\tRegular'},
+  set properties(values){Object.assign(this,values);}
+}));
 const paragraph={contents:text,characters:chars,appliedParagraphStyle:{name:'正文'}};
 const d={stories:[{paragraphs:[paragraph],extractLabel:()=> 'body'}]};
 const source='式中，f为输入；⟦EQ-003⟧Ω为积分域。';
@@ -17,6 +23,7 @@ assert.ok(R.sourceTextFormatting(d,c,false).some(x=>x.includes('ITALIC')));
 assert.ok(R.sourceTextFormatting(d,c,false).some(x=>x.includes('POSITION')));
 assert.equal(R.sourceTextFormatting(d,c,true).length,0);assert.equal(R.sourceTextFormatting(d,c,false).length,0);
 assert.equal(chars[3].fontStyle,'Italic');assert.equal(chars[text.indexOf('Ω')].position,2);
+assert.equal(chars[3].appliedFont.name,'Times New Roman\tItalic');
 const F=ctx.JournalFrontmatter;assert.equal(F.englishStyleContract('enAffiliation',{leading:25,spaceBefore:0,spaceAfter:2}).leading,25);assert.equal(F.englishStyleContract('enTitle',{leading:22,spaceBefore:3,spaceAfter:4}).leading,22);assert.equal(F.englishStyleContract('enAbstract',{leading:13,spaceBefore:0,spaceAfter:0}).leading,13);
 assert.equal(ctx.JournalArticleAssembly.printedFormulaNumber({},17),null);assert.equal(ctx.JournalArticleAssembly.printedFormulaNumber({displayNumbers:{17:'3'}},17),'3');
 console.log('PASS default native formulas, exact source italic/subscript mapping past markers, punctuation starts, front role leading, source-only numbering');

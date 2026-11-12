@@ -33,7 +33,7 @@ function fixture(spec) {
     }
   }));
   const story = role => ({
-    extractLabel: () => role, paragraphs: [], textContainers: [], tables: []
+    extractLabel: () => role, paragraphs: [], lines: [], textContainers: [], tables: []
   });
   return {
     document: {

@@ -22,6 +22,7 @@ assert.equal(prepared.captions[2],'图2  测试图二');
 assert.throws(()=>assembly.prepareBlocks(data,[{numbers:[1],afterParagraphText:'没有这段'}]),/PANEL_ANCHOR/);
 assert.equal(assembly.codeLine("import http from 'module';"),true);
 assert.equal(assembly.codeLine('这是一段正文。'),false);
+assert.equal(assembly.codeLine(':root{'),true);
 for(const line of [
   ' // 1. 动态注入鉴权凭证', ' * 全局请求封装方法', '# 后端核心登录接口',
   "return jsonify({'message': '参数不完整'})", '    try:', 'def login():',
