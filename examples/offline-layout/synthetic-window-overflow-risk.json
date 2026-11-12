@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "sourceIdentity": "synthetic-demo",
+  "startIndex": 100,
+  "endIndex": 170,
+  "blocks": [
+    { "startIndex": 100, "endIndex": 110, "kind": "text", "advanceMm": 16, "canBreakAfter": true, "errorBelowMm": 0, "errorAboveMm": 0 },
+    { "startIndex": 110, "endIndex": 120, "kind": "text", "advanceMm": 16, "canBreakAfter": true, "errorBelowMm": 0, "errorAboveMm": 0 },
+    { "startIndex": 120, "endIndex": 130, "kind": "span", "advanceMm": 20, "canBreakAfter": true, "errorBelowMm": 0, "errorAboveMm": 2 },
+    { "startIndex": 130, "endIndex": 140, "kind": "text", "advanceMm": 23, "canBreakAfter": true, "errorBelowMm": 0.2, "errorAboveMm": 0.2 },
+    { "startIndex": 140, "endIndex": 150, "kind": "text", "advanceMm": 23, "canBreakAfter": true, "errorBelowMm": 0.2, "errorAboveMm": 0.2 },
+    { "startIndex": 150, "endIndex": 160, "kind": "text", "advanceMm": 15, "canBreakAfter": true, "errorBelowMm": 0.02, "errorAboveMm": 0.02 },
+    { "startIndex": 160, "endIndex": 170, "kind": "text", "advanceMm": 15.05, "errorBelowMm": 0.02, "errorAboveMm": 0.02 }
+  ],
+  "slots": [
+    { "page": 2, "kind": "span-left", "capacityMm": 60, "maxBlankMm": 0, "requiredStartIndex": 0, "requiredEndIndex": 1 },
+    { "page": 2, "kind": "span-right", "capacityMm": 60, "maxBlankMm": 0 },
+    { "page": 2, "kind": "span", "capacityMm": 60, "maxBlankMm": 0 },
+    { "page": 2, "kind": "column", "belowSpan": true, "capacityMm": 60, "maxBlankMm": 2 },
+    { "page": 2, "kind": "column", "belowSpan": true, "capacityMm": 60, "maxBlankMm": 2 },
+    { "page": 3, "kind": "tail-left", "capacityMm": 60, "maxBlankMm": 0 },
+    { "page": 3, "kind": "tail-right", "capacityMm": 60, "maxBlankMm": 0 }
+  ]
+}
