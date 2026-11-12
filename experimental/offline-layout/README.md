@@ -88,3 +88,8 @@ pwsh -NoProfile -File tests/run_offline_candidate_regressions.ps1 -WithWindowsTy
 ```
 
 第一条只运行数值筛选和测量复用测试。第二条增加本机字形合成测试。所有测试均不打开 Adobe；未运行的原生验证不能被标为通过。
+
+
+## 使用优先级（2026-11-12）
+
+本模块按需选用，不是正式初排交付的必经环节。基础 Word/素材分析继续保留；专属字宽预测、误差校准和补测仅在选用本模块时运行。默认先做原生范围齐底，未解决的版面问题标注后交编辑。参见 [协作模式](../../docs/native-candidate-20261112.md)。
