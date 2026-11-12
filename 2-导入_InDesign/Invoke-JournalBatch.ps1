@@ -118,8 +118,10 @@ if($Action -eq 'Acquire'){
         return [int](Read-JournalJson $_.planPath).counts.formulas -gt 0
     }|Sort-Object updatedAt)
     if($TaskId){$candidates=@($candidates|Where-Object{$_.taskId -eq $TaskId})};if(-not $candidates.Count){throw 'No ready task is available'};$record=$candidates[0]
-    if($Lane -eq 'InDesign'){$plan=Read-JournalJson $record.planPath;if($plan.counts.formulas -gt 0 -and -not $record.formulaReady){throw 'Formula assets are not ready; acquire Illustrator first'};if($record.workflowStage -ne 'formulas-approved'){throw "Task is not ready for layout: $($record.workflowStage)"};$record.status='layout';SaveTask $record}
-    $lease=[ordered]@{lane=$Lane;taskId=$record.taskId;leaseId=[guid]::NewGuid().ToString('N');acquiredAt=(Get-Date).ToUniversalTime().ToString('o');processId=$PID};Write-JournalJsonAtomic ([pscustomobject]$lease) $lock;[pscustomobject]$lease|ConvertTo-Json;exit
+    if($Lane -eq 'InDesign'){$plan=Read-JournalJson $record.planPath;if($plan.counts.formulas -gt 0 -and -not $record.formulaReady){throw 'Formula assets are not ready; acquire Illustrator first'};if($record.workflowStage -ne 'formulas-approved'){throw "Task is not ready for layout: $($record.workflowStage)"}}
+    $lease=[ordered]@{lane=$Lane;taskId=$record.taskId;leaseId=[guid]::NewGuid().ToString('N');acquiredAt=(Get-Date).ToUniversalTime().ToString('o');processId=$PID};Write-JournalJsonAtomic ([pscustomobject]$lease) $lock -CreateOnly
+    try{if($Lane -eq 'InDesign'){$record.status='layout';SaveTask $record}}catch{Remove-Item -LiteralPath $lock -Force;throw}
+    [pscustomobject]$lease|ConvertTo-Json;exit
 }
 if($Action -in @('Complete','Release')){
     $lock=LockFile $Lane;if(-not(Test-Path -LiteralPath $lock)){throw "$Lane lane is not held"};$lease=Read-JournalJson $lock;if($lease.leaseId -ne $LeaseId){throw 'Lease id does not match'};$record=EnsureRecord (ReadTask $lease.taskId);$duration=[long]([DateTimeOffset]::UtcNow-([DateTimeOffset]$lease.acquiredAt)).TotalMilliseconds

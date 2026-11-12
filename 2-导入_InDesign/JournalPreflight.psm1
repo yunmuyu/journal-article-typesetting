@@ -8,13 +8,18 @@ function Read-JournalJson {
 }
 
 function Write-JournalJsonAtomic {
-    param([object]$Value, [string]$Path)
+    param([object]$Value, [string]$Path, [switch]$CreateOnly)
     $full = [IO.Path]::GetFullPath($Path)
     $parent = [IO.Path]::GetDirectoryName($full)
     if (-not (Test-Path -LiteralPath $parent)) { [void](New-Item -ItemType Directory -Path $parent) }
     $temp = "$full.$([guid]::NewGuid().ToString('N')).tmp"
     [IO.File]::WriteAllText($temp, ($Value | ConvertTo-Json -Depth 30), [Text.UTF8Encoding]::new($false))
-    Move-Item -LiteralPath $temp -Destination $full -Force
+    try {
+        if ($CreateOnly) { [IO.File]::Move($temp, $full) }
+        else { Move-Item -LiteralPath $temp -Destination $full -Force }
+    } finally {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
+    }
 }
 
 function Get-JournalRasterMetrics {
