@@ -8,6 +8,8 @@
 
 ## 当前工具修订
 
+2026-11-12 的[离线排版开发候选](experimental/offline-layout/README.md)提供数值求解与本机字形测量的独立入口，当前仅用于开发验证。首页公式回排、第18页齐底、换栏高度误差及第二次整篇实排仍未通过，详见[候选范围](docs/releases/2026-11-12-offline-layout-candidate.md)。
+
 最新说明见 [2026-10-21工具更新](docs/releases/2026-10-21-tools-update.md)。`run_journal_article.py` 仍是未完成原型，正式流程使用下面的分阶段组件。表内公式及原位装配等限制以更新说明为准。
 
 ## 运行流程
