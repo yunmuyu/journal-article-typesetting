@@ -91,18 +91,26 @@ function Get-TrackingStates {
     $states = @([pscustomobject]@{ Effect=0.0; Score=0.0; Actions=@() })
     foreach ($candidate in $Candidates) {
         $options = if ($IncludeAlternatives) { @($candidate.Outcomes) } else { @($candidate.Outcomes | Where-Object { [math]::Abs($_.Tracking-$candidate.Current)-lt 0.000001 -and $_.LineDelta-eq 0 }) }
-        $next = [Collections.Generic.List[object]]::new()
+        # Later tiers see only the total effect. Keep the least disruptive plan for each exact effect.
+        $next = [ordered]@{}
         foreach ($state in $states) {
             foreach ($option in $options) {
+                $effect = $state.Effect+$option.Effect
+                $score = $state.Score+[math]::Abs($option.Tracking-$candidate.Current)
+                $changed = [math]::Abs($option.Tracking-$candidate.Current)-gt 0.000001 -or $option.LineDelta-ne 0
+                $actionCount = $state.Actions.Count+[int]$changed
+                $previous = $next[$effect]
+                if ($null -ne $previous -and ($previous.Score -lt $score -or
+                    ($previous.Score -eq $score -and $previous.Actions.Count -le $actionCount))) { continue }
                 $actions = @($state.Actions)
-                if ([math]::Abs($option.Tracking-$candidate.Current)-gt 0.000001 -or $option.LineDelta-ne 0) {
+                if ($changed) {
                     $actions += [pscustomobject][ordered]@{ kind='tracking'; id=$candidate.Id; from=[math]::Round($candidate.Current,6); to=[math]::Round($option.Tracking,6); lineDelta=$option.LineDelta; effectPt=[math]::Round($option.Effect,6); orphanFree=$true; target=$candidate.Target }
                 }
-                $next.Add([pscustomobject]@{ Effect=$state.Effect+$option.Effect; Score=$state.Score+[math]::Abs($option.Tracking-$candidate.Current); Actions=$actions })
+                $next[$effect] = [pscustomobject]@{ Effect=$effect; Score=$score; Actions=$actions }
                 if ($next.Count -gt 512) { throw 'BOTTOM_TRACKING_COMBINATIONS_EXCEEDED 512' }
             }
         }
-        $states = @($next)
+        $states = @($next.Values)
     }
     @($states | Sort-Object Score,Effect)
 }
@@ -179,4 +187,103 @@ function New-JournalBottomPlan {
     [pscustomobject][ordered]@{ schemaVersion=1; engine='journal-bottom-solver'; status=if($blocked.Count){'blocked'}else{'ready'}; tolerancePt=$tolerance; adobeCalls=0; blankSpaceAllowed=$false; columns=@($plans); blockedColumns=@($blocked | ForEach-Object { $_.id }) }
 }
 
-Export-ModuleMember -Function New-JournalBottomPlan
+function New-JournalSharedBottomPlan {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$InputObject
+    )
+
+    $minimum = Get-RequiredNumber $InputObject.sharedMinPt 'sharedMinPt'
+    $maximum = Get-RequiredNumber $InputObject.sharedMaxPt 'sharedMaxPt'
+    if ($minimum -gt $maximum) { throw 'BOTTOM_SHARED_RANGE' }
+    $low = $minimum
+    $high = $maximum
+    $columns = [Collections.Generic.List[object]]::new()
+    $ids = @{}
+    foreach ($column in $InputObject.columns) {
+        $id = [string]$column.id
+        if ([string]::IsNullOrWhiteSpace($id) -or $ids.ContainsKey($id)) { throw "BOTTOM_SHARED_COLUMN_ID $id" }
+        $ids[$id] = $true
+        $delta = Get-RequiredNumber $column.deltaPt "$id.deltaPt"
+        $localMin = Get-RequiredNumber $column.localMinPt "$id.localMinPt"
+        $localMax = Get-RequiredNumber $column.localMaxPt "$id.localMaxPt"
+        $coefficient = Get-RequiredNumber $column.sharedCoefficient "$id.sharedCoefficient"
+        if ($localMin -gt 0 -or $localMax -lt 0) { throw "BOTTOM_SHARED_LOCAL_RANGE $id" }
+
+        # Each band must be able to absorb the residual left by the same shared adjustment.
+        $from = $minimum
+        $to = $maximum
+        if ($coefficient -ne 0) {
+            $a = ($delta - $localMax) / $coefficient
+            $b = ($delta - $localMin) / $coefficient
+            $from = [math]::Min($a, $b)
+            $to = [math]::Max($a, $b)
+        } elseif ($delta -lt $localMin -or $delta -gt $localMax) {
+            $from = [double]::PositiveInfinity
+            $to = [double]::NegativeInfinity
+        }
+        $low = [math]::Max($low, $from)
+        $high = [math]::Min($high, $to)
+        $columns.Add([pscustomobject]@{
+            id=$id; deltaPt=$delta; localMinPt=$localMin; localMaxPt=$localMax
+            sharedCoefficient=$coefficient
+            sharedRangePt=if ($from -le $to) { @($from, $to) } else { $null }
+        })
+    }
+    if (-not $columns.Count) { throw 'BOTTOM_INPUT_MISSING columns' }
+
+    $epsilon = 0.0000001
+    if ($low -gt $high + $epsilon) {
+        return [pscustomobject]@{status='blocked'; code='BOTTOM_SHARED_UNSOLVABLE'; columns=@($columns)}
+    }
+    $shared = [math]::Min($maximum, [math]::Max($minimum, [math]::Max($low, [math]::Min($high, 0))))
+    $adjustments = foreach ($column in $columns) {
+        $effect = $shared * $column.sharedCoefficient
+        [pscustomobject]@{id=$column.id; sharedEffectPt=$effect; localDeltaPt=$column.deltaPt - $effect}
+    }
+    [pscustomobject]@{status='ready'; sharedDeltaPt=$shared; columns=@($adjustments)}
+}
+
+function New-JournalFixedFlowFit {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][object[]]$Samples)
+
+    $points = @(foreach ($sample in $Samples) {
+        if ($sample.sameFlow -ne $true) { continue }
+        $fraction = Get-RequiredNumber $sample.fraction 'fraction'
+        if ($fraction -lt 0 -or $fraction -gt 1) { throw 'BOTTOM_FIXED_FLOW_FRACTION' }
+        [pscustomobject]@{fraction=$fraction; residualMm=(Get-RequiredNumber $sample.residualMm 'residualMm')}
+    })
+    $points = @($points | Sort-Object fraction)
+    if ($points.Count -lt 2) {
+        return [pscustomobject]@{status='blocked';code='BOTTOM_FIXED_FLOW_NEEDS_STABLE_SAMPLES'}
+    }
+    $first = $points[0]
+    $last = $points[-1]
+    $span = $last.fraction-$first.fraction
+    if ($span -le 0) { return [pscustomobject]@{status='blocked';code='BOTTOM_FIXED_FLOW_NEEDS_DISTINCT_SAMPLES'} }
+    foreach ($sample in $Samples) {
+        if ($sample.sameFlow -ne $true -and $sample.fraction -ge $first.fraction -and $sample.fraction -le $last.fraction) {
+            return [pscustomobject]@{status='blocked';code='BOTTOM_FIXED_FLOW_UNSTABLE_BRACKET'}
+        }
+    }
+    $slope = ($last.residualMm-$first.residualMm)/$span
+    $toleranceMm = .01
+    foreach ($point in $points) {
+        $predicted = $first.residualMm+$slope*($point.fraction-$first.fraction)
+        if ([math]::Abs($predicted-$point.residualMm) -gt $toleranceMm) {
+            return [pscustomobject]@{status='blocked';code='BOTTOM_FIXED_FLOW_NONLINEAR'}
+        }
+    }
+    if ([math]::Abs($first.residualMm) -le $toleranceMm) { $fraction=$first.fraction }
+    elseif ([math]::Abs($slope) -gt 0.0000001) { $fraction=$first.fraction-$first.residualMm/$slope }
+    else { $fraction=[double]::PositiveInfinity }
+    if ($fraction -lt $first.fraction -or $fraction -gt $last.fraction) {
+        if ([math]::Abs($last.residualMm) -le $toleranceMm) { $fraction=$last.fraction }
+        else { return [pscustomobject]@{status='blocked';code='BOTTOM_FIXED_FLOW_NO_BRACKET'} }
+    }
+    [pscustomobject]@{status='ready';fraction=$fraction;sampleCount=$points.Count
+        measuredRange=@($first.fraction,$last.fraction);responseMmPerFraction=$slope}
+}
+
+Export-ModuleMember -Function New-JournalBottomPlan, New-JournalSharedBottomPlan, New-JournalFixedFlowFit

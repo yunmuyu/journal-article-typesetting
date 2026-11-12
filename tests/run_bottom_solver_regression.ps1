@@ -36,6 +36,60 @@ $action = @($plan.columns[0].adjustments | Where-Object kind -eq 'tracking')[0]
 Assert-True ($plan.status -eq 'ready' -and $plan.columns[0].stage -eq 'tracking') 'tracking-assisted plan should be ready'
 Assert-True ([math]::Abs($action.to-13.18) -lt 0.000001 -and [math]::Abs($action.to) -le 20) 'valid orphan-free tracking should be selected'
 
+# Twelve binary choices produce 4096 combinations but only thirteen distinct height effects.
+$column = New-Column 90
+$column.trackingCandidates = @(foreach ($i in 1..12) {
+    [ordered]@{
+        id="candidate-$i"; current=0; lineHeightPt=15
+        outcomes=@(
+            [ordered]@{ tracking=0; lineDelta=0; orphanFree=$true },
+            [ordered]@{ tracking=(13-$i); lineDelta=1; orphanFree=$true }
+        )
+    }
+})
+$plan = New-JournalBottomPlan -InputObject ([ordered]@{ version=1; tolerancePt=0.01; columns=@($column) })
+$actions = $plan.columns[0].adjustments
+Assert-True ($plan.status -eq 'ready' -and $actions.Count -eq 6) 'equivalent tracking combinations must not exhaust the search limit'
+Assert-True ((($actions.id | Sort-Object) -join ',') -eq 'candidate-10,candidate-11,candidate-12,candidate-7,candidate-8,candidate-9') 'equivalent effects should retain the least total tracking change'
+
+# A figure band can move both lower columns without moving the upper text.
+$toPt = 72 / 25.4
+$sharedInput = @{
+    sharedMinPt=0; sharedMaxPt=5*$toPt
+    columns=@(
+        @{id='upper'; deltaPt=0; localMinPt=0; localMaxPt=0; sharedCoefficient=0},
+        @{id='lower-left'; deltaPt=4.356*$toPt; localMinPt=0; localMaxPt=0; sharedCoefficient=1},
+        @{id='lower-right'; deltaPt=5.150*$toPt; localMinPt=0; localMaxPt=0.8*$toPt; sharedCoefficient=1}
+    )
+}
+$sharedPlan = New-JournalSharedBottomPlan $sharedInput
+Assert-True ($sharedPlan.status -eq 'ready') 'a common shift and legal local remainder should solve both columns'
+Assert-True ([math]::Abs($sharedPlan.sharedDeltaPt - 4.356*$toPt) -lt 0.000001) 'the fixed left column should determine the common shift'
+Assert-True ([math]::Abs($sharedPlan.columns[2].localDeltaPt - 0.794*$toPt) -lt 0.000001) 'the right column should receive only its remaining gap'
+$sharedInput.columns[2].localMaxPt = 0.5*$toPt
+Assert-True ((New-JournalSharedBottomPlan $sharedInput).status -eq 'blocked') 'individually reachable but incompatible column ranges must be rejected'
+
+$opposed = New-JournalSharedBottomPlan @{
+    sharedMinPt=-5; sharedMaxPt=5
+    columns=@(
+        @{id='above'; deltaPt=3; localMinPt=0; localMaxPt=1; sharedCoefficient=-1},
+        @{id='below'; deltaPt=-3; localMinPt=-1; localMaxPt=0; sharedCoefficient=1}
+    )
+}
+Assert-True ($opposed.status -eq 'ready' -and $opposed.sharedDeltaPt -eq -2) 'opposite effects should use the feasible shift nearest zero'
+
+$flowSamples=@(
+    @{fraction=0; residualMm=-4.33787479986; sameFlow=$true},
+    @{fraction=.5; residualMm=-2.16287479986; sameFlow=$true},
+    @{fraction=1; residualMm=.01212520014; sameFlow=$true}
+)
+$fixed=New-JournalFixedFlowFit -Samples $flowSamples
+Assert-True ($fixed.status -eq 'ready' -and [math]::Abs($fixed.fraction-.99721259767) -lt .000001) 'fixed line breaks should permit a direct adjustment'
+$unstable=New-JournalFixedFlowFit -Samples ($flowSamples + @{fraction=.75; residualMm=0; sameFlow=$false})
+Assert-True ($unstable.code -eq 'BOTTOM_FIXED_FLOW_UNSTABLE_BRACKET') 'a changed breakpoint inside the bracket invalidates interpolation'
+$flowSamples[1].residualMm=-1
+Assert-True ((New-JournalFixedFlowFit -Samples $flowSamples).code -eq 'BOTTOM_FIXED_FLOW_NONLINEAR') 'nonlinear measured responses must not produce a direct plan'
+
 # Given a last-page reference group with an overly broad supplied range.
 $column = New-Column 3.6
 $column.lastPage = $true
