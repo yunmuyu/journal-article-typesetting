@@ -1,0 +1,13 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict');
+const c=vm.createContext({});vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_handoff_cleanup.jsxinc'),'utf8'),c);
+const h=c.JournalHandoffCleanup;
+let text='\t\uFFFC\n\t(15)\r';
+const p={get contents(){return text;},get lines(){return text[0]==='\t'?[{contents:'\t'},{contents:'\uFFFC'},{contents:'(15)'}]:[{contents:'\uFFFC'},{contents:'(15)'}];},characters:[{remove(){text=text.slice(1);}}],insertionPoints:[{set contents(v){text=v+text;}}]};
+assert.equal(h.emptyFormulaTab({recompose(){}},p),true);assert.equal(text,'\uFFFC\n\t(15)\r');assert.equal(h.emptyFormulaTab({recompose(){}},p),false);
+const chars=Array.from('[1] Title [J]. x').map(contents=>({contents,fontStyle:'Italic'}));
+h.referenceMarkers({paragraphs:[{contents:'[1] Title [J]. x',characters:chars}]});
+assert.equal(chars[10].fontStyle,'Regular');assert.equal(chars[14].fontStyle,'Italic');
+let removed=0;const guide={label:'spacing-guide-top',nonprinting:true,remove(){removed++;}},line={label:'article-footer-separator',remove(){throw Error('formal line removed');}};
+assert.equal(h.guides([{allPageItems:[guide,line]}]),1);assert.equal(removed,1);
+assert.throws(()=>h.guides([{allPageItems:[{label:'spacing-guide-top',nonprinting:false}]}]),/HANDOFF_GUIDE_PRINTING/);
+console.log('PASS empty tab cleanup preserves number break, reference markers stay upright, only nonprinting helper guides removed');

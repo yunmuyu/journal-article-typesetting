@@ -1,0 +1,39 @@
+/* Final editable handoff cleanup; caller supplies only the intended article stories/pages. */
+var JournalHandoffCleanup=(function(){
+ function emptyFormulaTab(document,paragraph){
+  var before=String(paragraph.contents),count=paragraph.lines.length;
+  if(count<2||before.charAt(0)!=='\t'||!/^\t[\uFFFC\u0016]/.test(before)||
+     !/^\s*$/.test(String(paragraph.lines[0].contents)))return false;
+  paragraph.characters[0].remove();document.recompose();
+  if(paragraph.lines.length<count&&String(paragraph.contents)===before.substring(1))return true;
+  paragraph.insertionPoints[0].contents='\t';document.recompose();return false;
+ }
+ function guides(pages){
+  var remove=[];
+  for(var p=0;p<pages.length;p++){var items=pages[p].allPageItems;
+   for(var i=0;i<items.length;i++)if(/^spacing-guide-(top|bottom|footer)$/.test(items[i].label)){
+    if(items[i].nonprinting!==true)throw Error('HANDOFF_GUIDE_PRINTING '+items[i].id);
+    remove.push(items[i]);
+   }
+  }
+  for(var i=0;i<remove.length;i++)remove[i].remove();return remove.length;
+ }
+ function referenceMarkers(story){
+  var count=0;
+  for(var p=0;p<story.paragraphs.length;p++){
+   var paragraph=story.paragraphs[p],text=String(paragraph.contents);
+   if(!/^\s*\[\d+\]/.test(text))continue;
+   var pattern=/\[(?:J|M|C|D|R|S|N|P|EB|DB|CP)(?:\/(?:OL|CD|DK))?\]/g,match;
+   while((match=pattern.exec(text))){
+    for(var i=match.index;i<match.index+match[0].length;i++){
+     var character=paragraph.characters[i];
+     if(/Italic|Oblique/.test(String(character.fontStyle)))character.fontStyle=/Bold/.test(String(character.fontStyle))?'Bold':'Regular';
+     if(/Italic|Oblique/.test(String(character.fontStyle)))throw Error('REFERENCE_MARKER_ITALIC');
+    }
+    count++;
+   }
+  }
+  return count;
+ }
+ return {emptyFormulaTab:emptyFormulaTab,guides:guides,referenceMarkers:referenceMarkers};
+}());
