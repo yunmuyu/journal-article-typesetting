@@ -1083,11 +1083,12 @@ return logs;}
 
             for(var ci=0;ci<src.offsets.length;ci++){
 
-                var italic=false,position=Position.NORMAL;
+                var italic=false,bold=false,position=Position.NORMAL;
 
                 for(var ri=0;ri<runs.length;ri++)if(src.offsets[ci]>=runs[ri].start&&src.offsets[ci]<runs[ri].end){
 
                     if(runs[ri].italic===true)italic=true;
+                    if(runs[ri].bold===true)bold=true;
 
                     if(runs[ri].position)position=sourcePosition(runs[ri].position);
 
@@ -1106,11 +1107,11 @@ return logs;}
 
                 var previousFont=String(ch.appliedFont.name),previousFace=String(ch.fontStyle),previousFamily=family(ch);
                 var legacyTimes=previousFamily==='Times New Roman (OTF)';
-                var formattedOperator=actualItalic&&String(ch.contents)==='='&&!legacyTimes;
+                var formattedOperator=actualItalic&&String(ch.contents)==='='&&!legacyTimes&&!bold;
                 var timesFace=null;
                 if(!exceptionFont){
-                    if(italic&&!formattedOperator)timesFace='Italic';
-                    if(!italic&&(legacyTimes||actualItalic&&previousFamily==='Times New Roman'))timesFace='Regular';
+                    if(italic&&!formattedOperator)timesFace=bold?'Bold Italic':'Italic';
+                    if(!italic&&(legacyTimes||actualItalic&&previousFamily==='Times New Roman'))timesFace=/Bold/.test(previousFace)?'Bold':'Regular';
                 }
                 try{if(apply){
 

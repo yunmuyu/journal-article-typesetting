@@ -1,7 +1,8 @@
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict'),path=require('node:path');
 const italic={name:'Times New Roman\tItalic',fontFamily:'Times New Roman',postscriptName:'TimesNewRomanPS-ItalicMT',status:1};
 const regular={name:'Times New Roman\tRegular',fontFamily:'Times New Roman',postscriptName:'TimesNewRomanPSMT',status:1};
-const c=vm.createContext({Position:{NORMAL:0},FontStatus:{INSTALLED:1},app:{fonts:{everyItem:()=>({getElements:()=>[italic,regular]})}}});
+const boldItalic={name:'Times New Roman\tBold Italic',fontFamily:'Times New Roman',postscriptName:'TimesNewRomanPS-BoldItalicMT',status:1};
+const c=vm.createContext({Position:{NORMAL:0},FontStatus:{INSTALLED:1},app:{fonts:{everyItem:()=>({getElements:()=>[italic,regular,boldItalic]})}}});
 vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_layout_rules.jsxinc'),'utf8'),c);
 // Given: native text already has the requested face; reassigning it can fail in a recycled document.
 const character={contents:'P',position:0,fontStyle:'Italic',get appliedFont(){return italic;},set appliedFont(value){throw Error('NATIVE_REDUNDANT_FONT_ASSIGNMENT');}};
@@ -65,3 +66,18 @@ assert.equal(cellCharacter.appliedFont,italic);
 cellText.characters[0]=legacyCharacter('x','Italic',false);
 assert.throws(()=>c.JournalLayout.applySourceTableFormatting(tableDoc,tableConfig),/SOURCE_TABLE_FONT_ALIAS.*Times New Roman \(OTF\)/);
 console.log('PASS native digit and source table assignments use the canonical family and preserve the requested face');
+const titleFont={name:'黑体\tBold',fontFamily:'黑体',status:1};
+const boldPair=[
+    {contents:'P',position:0,fontStyle:'Italic',appliedFont:italic,
+        set properties(values){this.fontStyle=values.fontStyle;this.appliedFont=values.fontStyle==='Bold Italic'?boldItalic:italic;}},
+    {contents:'Q',position:0,fontStyle:'Bold',appliedFont:titleFont,
+        set properties(values){throw Error('TEMPLATE_BOLD_REASSIGNED');}}
+];
+const boldDoc={stories:[{paragraphs:[{...paragraph,contents:'PQ',characters:boldPair}],extractLabel:()=> 'body'}]};
+const boldSource={sourceTextFormatting:[{role:'body',text:'PQ',runs:[{start:0,end:1,italic:true,bold:true}]}]};
+assert.ok(c.JournalLayout.sourceTextFormatting(boldDoc,boldSource,false).some(error=>error.endsWith('Bold Italic')));
+assert.equal(c.JournalLayout.sourceTextFormatting(boldDoc,boldSource,true).length,0);
+assert.equal(boldPair[0].appliedFont,boldItalic);
+assert.equal(boldPair[1].appliedFont,titleFont);
+assert.equal(boldPair[1].fontStyle,'Bold');
+console.log('PASS source bold italic maps to Times Bold Italic and preserves template bold');

@@ -248,6 +248,16 @@ var JournalFrontmatter = (function () {
             var range = paragraph.characters.itemByRange(start, end);
             if (run.position === "superscript") range.position = Position.SUPERSCRIPT;
             else if (run.position === "subscript") range.position = Position.SUBSCRIPT;
+            if (run.italic === true) for (var ci=start;ci<=end;ci++) {
+                var character=paragraph.characters[ci];
+                // Chinese punctuation remains upright even when Word marks the entire run italic.
+                if (/^[\s、，。；：！？（）【】《》“”‘’]$/.test(String(character.contents))) continue;
+                var face=run.bold===true?'Bold Italic':'Italic';
+                character.properties={appliedFont:'Times New Roman',fontStyle:face};
+                if (String(character.appliedFont.name).split('\t')[0]!=='Times New Roman' ||
+                    character.appliedFont.status!==FontStatus.INSTALLED || String(character.fontStyle)!==face)
+                    throw Error('FRONTMATTER_SOURCE_FONT '+ci);
+            }
         }
     }
 
@@ -508,6 +518,7 @@ var JournalFrontmatter = (function () {
     }
 
     return {
+        applySourceRuns: applyRuns,
         writeParagraphs: writeParagraphs,
         fitSingleCharacterTitle: fitSingleCharacterTitle,
         affiliationBoundary: affiliationBoundary, separateAffiliations: separateAffiliations,
