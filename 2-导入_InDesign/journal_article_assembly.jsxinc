@@ -307,6 +307,20 @@ var JournalArticleAssembly = (function () {
     }
     function optimizeNativeTable(d,t,rows,structure,options){
         var i;
+        // Decimal alignment is width-dependent. Do not carry its old offsets
+        // into a narrower trial; the caller reapplies decimal alignment after fitting.
+        for(var resetCell=0;resetCell<t.cells.length;resetCell++){
+            var resetText=t.cells[resetCell].texts[0];
+            // Grouping spaces inside numeric data are not valid wrapping points.
+            if(/^[+\-\u2212]?\d[\d\s.,]*%?$/.test(String(resetText.contents).replace(/^\s+|\s+$/g,'')))resetText.noBreak=true;
+            var resetParagraphs=resetText.paragraphs;
+            if(!resetParagraphs)continue;
+            for(var resetIndex=0;resetIndex<resetParagraphs.length;resetIndex++){
+                resetParagraphs[resetIndex].leftIndent=0;
+                resetParagraphs[resetIndex].rightIndent=0;
+                resetParagraphs[resetIndex].firstLineIndent=0;
+            }
+        }
         if(t.columns.length>1){
             var initial=[];for(i=0;i<t.columns.length;i++)initial.push(t.columns[i].width);
             var chosen,baseline,candidateHeight=null,chosenHeight,minimums=tableWidthMinimums(rows,structure);

@@ -81,3 +81,15 @@ const beforeCapacity=formulaTable.columns.map(c=>c.width);
 assert.throws(()=>nativeContext.JournalArticleAssembly.optimizeNativeTable({recompose(){}},formulaTable,[['a','b']],formulaStructure),/TABLE_FORMULA_WIDTH_CAPACITY/);
 assert.deepEqual(formulaTable.columns.map(c=>c.width),beforeCapacity);
 console.log('PASS two-CJK table cells receive a usable minimum column width while total table width stays fixed');
+// A decimal offset measured in the old wide column must not make a narrow trial falsely overflow.
+const staleParagraph={leftIndent:20,rightIndent:0,firstLineIndent:0};
+const staleCells=[{overflows:false,texts:[{contents:'0.690 5',paragraphs:[staleParagraph],lines:[]}]}];
+const staleTable={columns:[{width:20},{width:65.5}],rows:[{height:5}],cells:staleCells};
+const staleDoc={recompose(){staleCells[0].overflows=staleParagraph.leftIndent+8>staleTable.columns[0].width;}};
+nativeContext.JournalArticleAssembly.optimizeNativeTable(staleDoc,staleTable,[['2.00','text']],
+  {widths:[20,65.5],rows:[[{start:0,span:1},{start:1,span:1}]]},{maxEvaluations:4});
+assert.equal(staleParagraph.leftIndent,0);
+assert.equal(staleCells[0].overflows,false);
+assert.equal(staleCells[0].texts[0].noBreak,true,'grouping spaces must not split numeric data across lines');
+assert.equal(staleTable.columns[0].width,20,'do not widen a fitting column to compensate for stale indentation');
+console.log('PASS narrow table trials clear width-dependent decimal offsets');
