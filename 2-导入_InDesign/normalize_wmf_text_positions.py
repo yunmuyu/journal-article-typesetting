@@ -1,11 +1,31 @@
 """Make WMF current-position text explicit for importers that ignore TA_UPDATECP advances."""
+from __future__ import annotations
+
 import json
+import string
 import struct
 import sys
 from pathlib import Path
+from typing import NamedTuple, TypedDict
 
 
-def normalize(data):
+class Font(NamedTuple):
+    charset: int
+    name: bytes
+
+    @property
+    def transcode(self) -> bool:
+        return self.charset == 128 and self.name.replace(b' ', b'').lower() == b'notosanssc'
+
+
+class GreekRepair(TypedDict):
+    token: str
+    text: str
+    fontFamily: str
+    count: int
+
+
+def _normalize(data: bytes, repair_greek: bool) -> tuple[bytes, int, list[GreekRepair]]:
     header = 22 if data[:4] == bytes.fromhex('d7cdc69a') else 0
     offset = header + 18
     parts = [data[:offset]]
@@ -13,8 +33,11 @@ def normalize(data):
     explicit = False
     update = False
     inserted = 0
-    objects = {}
-    selected_font = None
+    objects: dict[int, Font | None] = {}
+    selected_font: Font | None = None
+    saved_fonts: list[Font | None] = []
+    occupied: set[int] = set()
+    greek_runs: list[tuple[int, int, bytes, str]] = []
     while offset + 6 <= len(data):
         words, function = struct.unpack_from('<IH', data, offset)
         if words < 3 or offset + words * 2 > len(data):
@@ -23,9 +46,9 @@ def normalize(data):
         payload = record[6:]
         if function in (0x02fb, 0x02fa, 0x02fc, 0x06ff, 0x00f7, 0x02fd, 0x0142):
             slot = next(i for i in range(len(objects) + 1) if i not in objects)
-            transcode = function == 0x02fb and payload[13] == 128 and payload[18:].split(b'\0')[0].replace(b' ', b'').lower() == b'notosanssc'
-            objects[slot] = {'font': function == 0x02fb, 'transcode': transcode}
-            if transcode:
+            font = Font(payload[13], payload[18:].split(b'\0')[0]) if function == 0x02fb else None
+            objects[slot] = font
+            if font and font.transcode:
                 payload = bytearray(payload)
                 payload[13] = 134
                 payload[18:50] = b'SimSun'.ljust(32, b'\0')
@@ -33,10 +56,22 @@ def normalize(data):
         elif function == 0x01f0:
             objects.pop(struct.unpack_from('<H', payload)[0], None)
         elif function == 0x012d:
-            selected = objects.get(struct.unpack_from('<H', payload)[0])
-            if selected and selected['font']:
+            index = struct.unpack_from('<H', payload)[0]
+            selected = objects.get(index)
+            if selected:
                 selected_font = selected
-        if function == 0x0a32 and selected_font and selected_font['transcode']:
+            elif repair_greek and index in (0x800a, 0x800b, 0x800c, 0x800d, 0x800e, 0x8010, 0x8011):
+                selected_font = None
+        elif repair_greek and function == 0x001e:
+            saved_fonts.append(selected_font)
+        elif repair_greek and function == 0x0127:
+            index = struct.unpack_from('<h', payload)[0]
+            restore = len(saved_fonts) + index if index < 0 else index - 1
+            if not 0 <= restore < len(saved_fonts):
+                raise ValueError('Invalid WMF saved font state')
+            selected_font = saved_fonts[restore]
+            del saved_fonts[restore:]
+        if function == 0x0a32 and selected_font and selected_font.transcode:
             y, x, count, options = struct.unpack_from('<hhHH', payload)
             start = 8 + (8 if options & 6 else 0)
             text = payload[start:start + count]
@@ -64,20 +99,82 @@ def normalize(data):
             else:
                 current = None
             explicit = False
+        if repair_greek and function in (0x0a32, 0x0521):
+            if function == 0x0a32:
+                _, _, count, options = struct.unpack_from('<hhHH', payload)
+                start = 8 + (8 if options & 6 else 0)
+            else:
+                count = struct.unpack_from('<H', payload)[0]
+                options = 0
+                start = 2
+            text = payload[start:start + count]
+            if len(text) != count:
+                raise ValueError('Truncated WMF text record')
+            occupied.update(text)
+            if selected_font and selected_font.charset == 161 and any(value >= 128 for value in text):
+                if options & 0x0010:
+                    raise ValueError('WMF Greek glyph-index records cannot be decoded as text')
+                family = selected_font.name.decode('cp1253').strip()
+                if not family:
+                    raise ValueError('WMF Greek text requires a named font')
+                greek_runs.append((len(parts), start + 6, text, family))
         parts.append(record)
         offset += words * 2
         if function == 0:
             break
+    repairs = _apply_greek_tokens(parts, greek_runs, occupied)
     result = bytearray(b''.join(parts))
     struct.pack_into('<I', result, header + 6, (len(result) - header) // 2)
-    return bytes(result), inserted
+    return bytes(result), inserted, repairs
+
+
+def _apply_greek_tokens(
+    parts: list[bytes],
+    runs: list[tuple[int, int, bytes, str]],
+    occupied: set[int],
+) -> list[GreekRepair]:
+    """Keep WMF text byte counts and advance arrays intact for Illustrator import."""
+    tokens = iter(value for value in (string.ascii_letters + string.digits).encode() if value not in occupied)
+    repairs: dict[tuple[str, int], GreekRepair] = {}
+    for index, start, text, family in runs:
+        replacement = bytearray(text)
+        for offset, value in enumerate(text):
+            if value < 128:
+                continue
+            key = (family, value)
+            if key not in repairs:
+                token = next(tokens, None)
+                if token is None:
+                    raise ValueError('WMF Greek import has no unused single-byte placeholders')
+                repairs[key] = {'token': chr(token), 'text': bytes([value]).decode('cp1253'),
+                                'fontFamily': family, 'count': 0}
+            repair = repairs[key]
+            repair['count'] += 1
+            replacement[offset] = ord(repair['token'])
+        record = parts[index]
+        parts[index] = record[:start] + replacement + record[start + len(text):]
+    return list(repairs.values())
+
+
+def normalize(data: bytes) -> tuple[bytes, int]:
+    """Normalize WMF text positions without the Illustrator Greek import workaround."""
+    normalized, inserted, _ = _normalize(data, repair_greek=False)
+    return normalized, inserted
+
+
+def normalize_for_import(data: bytes) -> tuple[bytes, int, list[GreekRepair]]:
+    """Normalize WMF and return the source-bound Greek replacements for Illustrator."""
+    return _normalize(data, repair_greek=True)
 
 
 if __name__ == '__main__':
     source, output = map(Path, sys.argv[1:3])
     if source.resolve() == output.resolve() or output.exists():
         raise ValueError('Output must be a new derivative file')
-    data, inserted = normalize(source.read_bytes())
+    if sys.argv[3:] not in ([], ['--greek-import']):
+        raise ValueError('Unknown WMF normalization option')
+    data, inserted, repairs = _normalize(source.read_bytes(), repair_greek=bool(sys.argv[3:]))
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_bytes(data)
-    print(json.dumps({'insertedExplicitPositions': inserted, 'output': str(output)}, ensure_ascii=True))
+    print(json.dumps({'insertedExplicitPositions': inserted, 'output': str(output),
+                      'greekRepairs': repairs}, ensure_ascii=True))

@@ -38,6 +38,32 @@ class CharsetRegression(unittest.TestCase):
         data = header + records
         self.assertEqual(module.normalize(data)[0], data)
 
+    def test_greek_placeholder_keeps_source_bytes_and_advances_distinct(self):
+        greek = bytearray(50)
+        greek[13] = 161
+        greek[18:50] = b'Times New Roman'.ljust(32, b'\0')
+        ansi = bytearray(greek)
+        ansi[13] = 0
+        adv = struct.pack('<h', 67)
+        text = struct.pack('<hhHH', 12, 34, 1, 0) + b'\xd3\0' + adv
+        records = (record(0x02fb, greek) + record(0x02fb, ansi)
+                   + record(0x012d, struct.pack('<H', 0)) + record(0x0a32, text)
+                   + record(0x012d, struct.pack('<H', 1)) + record(0x0a32, text)
+                   + record(0))
+        header = struct.pack('<HHHIHIH', 1, 9, 0x300, (18 + len(records)) // 2, 2, 28, 0)
+        original = header + records
+        output, inserted, repairs = module.normalize_for_import(original)
+        self.assertEqual(inserted, 0)
+        self.assertEqual(len(repairs), 1)
+        repair = repairs[0]
+        self.assertEqual(repair['text'], '\u03a3')
+        self.assertEqual(repair['fontFamily'], 'Times New Roman')
+        self.assertEqual(repair['count'], 1)
+        text_offset = 18 + 2 * 56 + 8 + 6 + 8
+        self.assertEqual(output, original[:text_offset] + repair['token'].encode('ascii')
+                         + original[text_offset + 1:])
+        self.assertEqual(module.normalize(original)[0], original)
+
 
 if __name__ == '__main__':
     unittest.main()

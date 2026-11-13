@@ -22,6 +22,19 @@ try{
  $manifestPath=Join-Path $root 'formula-cache-manifest.json'
  $prepared=(& (Join-Path $ProjectRoot '2-导入_InDesign\Prepare-JournalFormulaCache.ps1') -InputDirectory (Split-Path $source) -CacheRoot $cache -ManifestPath $manifestPath -Numbers 1 -Mode Plan|Out-String)|ConvertFrom-Json
  if($prepared.items[0].status -ne 'hit' -or -not(Test-Path -LiteralPath $prepared.logPath)){throw 'Plan manifest or event log missing'}
+ $sourceMap=Join-Path $root 'source-map.json'
+ $word=Join-Path $root 'synthetic-source.doc'
+ [IO.File]::WriteAllText($word,'synthetic source')
+ $map=@{schemaVersion=1;source=$word;sourceSha256=(Get-FileHash -LiteralPath $word).Hash;formulas=@(
+  @{number=1;marker='⟦EQ-001⟧';path=$source;preview=@{sha256=(Get-FileHash -LiteralPath $source).Hash};displayNumber=$null;inline=$false}
+ )}
+ $map | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $sourceMap -Encoding utf8
+ $oldRecordHash=(Get-FileHash -LiteralPath $item.recordPath).Hash
+ $newRule=Get-JournalFormulaRule -Version 'formula-outline-v7-wmf-greek'
+ $expectedV7=Resolve-JournalFormulaCache -InputDirectory (Split-Path $source) -CacheRoot $cache -Numbers 1 -Rule $newRule
+ $nativePlan=& (Join-Path $ProjectRoot '2-导入_InDesign/Build-JournalNativeFormulaManifest.ps1') -FormulaSourceMap $sourceMap -InputDirectory (Split-Path $source) -CacheRoot $cache -ManifestPath (Join-Path $root 'native.json') -WorkingDirectory $root -PlanOnly | ConvertFrom-Json
+ if($nativePlan.items[0].cacheKey -ne $expectedV7.items[0].cacheKey -or $nativePlan.items[0].status -ne 'miss'){throw 'Native manifest default did not select isolated v7 identity'}
+ if((Get-FileHash -LiteralPath $item.recordPath).Hash -ne $oldRecordHash){throw 'Native v7 planning changed an existing cache record'}
  $pastePlan=(& (Join-Path $ProjectRoot '2-导入_InDesign\Use-JournalFormulaNativeCache.ps1') -ManifestPath $manifestPath -Number 1 -DocumentName 'fixture_QA.indd' -MarkerText '⟦EQ-001⟧' -PlanOnly|Out-String)|ConvertFrom-Json
  if($pastePlan.action -ne 'paste-and-cache'){throw 'First native use did not plan paste-and-cache'}
  [IO.File]::WriteAllText($second.items[0].idmsPath,'idms')

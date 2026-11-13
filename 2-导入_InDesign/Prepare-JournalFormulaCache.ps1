@@ -30,7 +30,7 @@ if($Mode -eq 'Build'){
         $stage=Join-Path (Join-Path $CacheRoot '.staging') ($item.cacheKey+'-'+[guid]::NewGuid().ToString('N'))
         New-Item -ItemType Directory -Path $stage -Force|Out-Null
         try{
-            & (Join-Path $PSScriptRoot 'Repair-JournalFormulaAssets.ps1') -InputDirectory $InputDirectory -OutputDirectory $stage -Numbers $item.number -ExportPdf:$ExportPreview -ExportPng:$ExportPreview|Out-Null
+            & (Join-Path $PSScriptRoot 'Repair-JournalFormulaAssets.ps1') -InputDirectory $InputDirectory -OutputDirectory $stage -Numbers $item.number -ExportPdf:$ExportPreview -ExportPng:$ExportPreview -LegacyBaseSize:($rule.version -match '^formula-outline-v[1-4](?:-|$)') -CenterEllipsis:($rule.version -eq 'formula-outline-v6-centered-ellipsis') -RepairGreekCharset:($rule.version -eq 'formula-outline-v7-wmf-greek')|Out-Null
             $sourcePrefix=Join-Path $stage ("formula-$($item.number)-10p5-simsun")
             $artifacts=[ordered]@{}
             New-Item -ItemType Directory -Path $item.cacheDirectory -Force|Out-Null

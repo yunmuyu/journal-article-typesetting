@@ -37,7 +37,7 @@ foreach($formula in $formulas){
     if($null -ne $formula.displayNumber -and [string]$formula.displayNumber -notmatch '^\d+$'){throw "FORMULA_DISPLAY_NUMBER_INVALID $number"}
     $displayNumbers[[string]$number]=$formula.displayNumber
 }
-$rule=Get-JournalFormulaRule
+$rule=Get-JournalFormulaRule -Version 'formula-outline-v7-wmf-greek'
 $cachePlan=Resolve-JournalFormulaCache -InputDirectory $inputRoot -CacheRoot $cachePath -Numbers @($formulas.number) -Rule $rule
 $plan=[ordered]@{mode='native-idms';status='planned';sourceMap=$mapPath;sourceMapSHA256=$mapHash;formula_count=$formulas.Count;uniqueMaterials=@($cachePlan.items.cacheKey|Sort-Object -Unique).Count;displayNumbers=$displayNumbers;items=$cachePlan.items;manifestPath=$outputPath;workingDirectory=$workingPath}
 if($PlanOnly){$plan|ConvertTo-Json -Depth 14;return}
@@ -45,7 +45,7 @@ if(Test-Path -LiteralPath $outputPath){throw 'FORMULA_NATIVE_MANIFEST_EXISTS'}
 $runDirectory=Join-Path $workingPath ('native-formula-'+[guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $runDirectory -Force|Out-Null
 $assetManifest=Join-Path $runDirectory 'asset-cache-manifest.json'
-& (Join-Path $PSScriptRoot 'Prepare-JournalFormulaCache.ps1') -InputDirectory $inputRoot -CacheRoot $cachePath -ManifestPath $assetManifest -Numbers @($formulas.number) -Mode Build|Out-Null
+& (Join-Path $PSScriptRoot 'Prepare-JournalFormulaCache.ps1') -InputDirectory $inputRoot -CacheRoot $cachePath -ManifestPath $assetManifest -Numbers @($formulas.number) -Mode Build -RuleVersion $rule.version|Out-Null
 $cacheDocument=Join-Path $runDirectory ('native_formula_cache_'+[guid]::NewGuid().ToString('N')+'_QA.indd')
 $documentJob=@{path=$cacheDocument;markers=@($formulas.marker)}|ConvertTo-Json -Compress
 $app=New-Object -ComObject InDesign.Application.2020

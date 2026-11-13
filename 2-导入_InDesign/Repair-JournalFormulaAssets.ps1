@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$InputDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[int[]]$Numbers=(1..10),[string]$PythonExe=$env:JOURNAL_PYTHON,[switch]$ExportPdf=$false,[switch]$ExportPng=$false)
+﻿param([Parameter(Mandatory=$true)][string]$InputDirectory,[Parameter(Mandatory=$true)][string]$OutputDirectory,[int[]]$Numbers=(1..10),[string]$PythonExe=$env:JOURNAL_PYTHON,[switch]$ExportPdf=$false,[switch]$ExportPng=$false,[switch]$LegacyBaseSize,[switch]$CenterEllipsis,[switch]$RepairGreekCharset)
 $ErrorActionPreference='Stop'
 if(-not $PythonExe){
  $candidates=@(Get-Command python.exe,python3.exe -CommandType Application -All -ErrorAction SilentlyContinue|Where-Object{$_.Source -notmatch '\\Microsoft\\WindowsApps\\' -and (Test-Path -LiteralPath $_.Source -PathType Leaf)})
@@ -19,9 +19,11 @@ foreach($number in $Numbers){
  if($number -lt 1){throw 'Formula number must be positive'}
  $normalizedRoot=Join-Path $outputRoot '_wmf_import_inputs'
  [void][IO.Directory]::CreateDirectory($normalizedRoot)
- & $PythonExe (Join-Path $PSScriptRoot 'normalize_wmf_text_positions.py') (Join-Path $inputRoot ('formula-'+$number+'.wmf')) (Join-Path $normalizedRoot ('formula-'+$number+'.wmf')) | Out-Null
+ $normalizerOptions=@(if($RepairGreekCharset){'--greek-import'})
+ $normalization=& $PythonExe (Join-Path $PSScriptRoot 'normalize_wmf_text_positions.py') (Join-Path $inputRoot ('formula-'+$number+'.wmf')) (Join-Path $normalizedRoot ('formula-'+$number+'.wmf')) @normalizerOptions
  if($LASTEXITCODE -ne 0){throw 'WMF_POSITION_NORMALIZATION_FAILED'}
- $job=@{inputDirectory=$normalizedRoot.Replace('\','/');outputDirectory=$outputRoot.Replace('\','/');number=$number;exportPdf=$ExportPdf.IsPresent;exportPng=$ExportPng.IsPresent}|ConvertTo-Json -Compress
+ $normalization=$normalization|ConvertFrom-Json
+ $job=@{inputDirectory=$normalizedRoot.Replace('\','/');outputDirectory=$outputRoot.Replace('\','/');number=$number;exportPdf=$ExportPdf.IsPresent;exportPng=$ExportPng.IsPresent;legacyBaseSize=$LegacyBaseSize.IsPresent;centerEllipsis=$CenterEllipsis.IsPresent;greekRepairs=$normalization.greekRepairs}|ConvertTo-Json -Compress
  $entryJson=ConvertTo-Json -InputObject $entry -Compress
  $result=[string]$app.DoJavaScript('var JournalFormulaJob='+$job+';$.evalFile(File('+$entryJson+'));')
  if(-not $result.StartsWith([string]$number+"`t")){throw "Formula result invalid: $result"}
