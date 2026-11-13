@@ -13,7 +13,11 @@ assert.equal(R.forbiddenLineStart('：普通正文',true),true);
 assert.equal(R.sourceProjection('f ⟦EQ-003⟧ φ_i').text,'fφ_i');
 const text='式中，f为输入；\uFFFCΩ为积分域。\r',chars=Array.from(text).map(contents=>({
   contents,position:0,fontStyle:'Regular',appliedFont:{name:'宋体\tRegular'},
-  set properties(values){Object.assign(this,values);}
+  set properties(values){
+    assert.equal(values.appliedFont,'Times New Roman');
+    this.appliedFont=ctx.app.fonts.everyItem().getElements().find(font=>font.name==='Times New Roman\t'+values.fontStyle);
+    this.fontStyle=values.fontStyle;
+  }
 }));
 const paragraph={contents:text,characters:chars,appliedParagraphStyle:{name:'正文'}};
 const d={stories:[{paragraphs:[paragraph],extractLabel:()=> 'body'}]};

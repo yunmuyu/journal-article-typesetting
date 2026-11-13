@@ -611,8 +611,11 @@ return logs;}
 
     function timesFont(face){if(!timesFaces){timesFaces={};var fonts=app.fonts.everyItem().getElements(),posts={'TimesNewRomanPSMT':'Regular','TimesNewRomanPS-ItalicMT':'Italic','TimesNewRomanPS-BoldMT':'Bold','TimesNewRomanPS-BoldItalicMT':'Bold Italic'};for(var i=0;i<fonts.length;i++)if(String(fonts[i].fontFamily)==='Times New Roman'&&fonts[i].status===FontStatus.INSTALLED&&posts[String(fonts[i].postscriptName)])timesFaces[posts[String(fonts[i].postscriptName)]]=fonts[i];}if(!timesFaces[face])throw Error('TIMES_FACE_UNAVAILABLE '+face);return timesFaces[face];}
 
-    function applyDigits(text){var chars=text.characters.everyItem().getElements();for(var i=0;i<chars.length;i++)if(/^[0-9]$/.test(String(chars[i].contents))){var face=String(chars[i].fontStyle),target=/Bold/.test(face)?(/Italic/.test(face)?'Bold Italic':'Bold'):(/Italic/.test(face)?'Italic':'Regular');var tf=timesFont(target);chars[i].properties={appliedFont:tf,fontStyle:target};// Verify via the font object's fontFamily, not through the composite alias in appliedFont.name.
-var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFamily);}catch(e){}if(actualFontFamily!=='Times New Roman')throw Error('DIGIT_FONT_ASSIGNMENT '+chars[i].index+' fontFamily='+actualFontFamily);}}
+    function applyDigits(text){var chars=text.characters.everyItem().getElements();for(var i=0;i<chars.length;i++)if(/^[0-9]$/.test(String(chars[i].contents))){
+        var face=String(chars[i].fontStyle),target=/Bold/.test(face)?(/Italic/.test(face)?'Bold Italic':'Bold'):(/Italic/.test(face)?'Italic':'Regular');
+        if(!timesFaceMatches(chars[i],target))applyTimesFace(chars[i],target);
+        if(!timesFaceMatches(chars[i],target))throw Error('DIGIT_FONT_ASSIGNMENT '+chars[i].index+' '+chars[i].appliedFont.name);
+    }}
 
     function specialGlyphFont(character){var text=String(character);if(text==='＞'||text==='＜')return '黑体';return text==='､'?'思源宋体 CN':null;}
 
@@ -708,16 +711,13 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
             var range=text.characters.itemByRange(run.start,end);range.position=sourcePosition(run.position);
 
             if(/^[A-Za-z0-9 \u00a0.,;:+\-]+$/.test(run.text)||
-                (run.italic&&/^[A-Za-z0-9\u0391-\u03a1\u03a3-\u03a9\u03b1-\u03c9 \u00a0.,;:+\-]+$/.test(run.text)))
-                range.properties={appliedFont:timesFont(run.italic?'Italic':'Regular'),fontStyle:run.italic?'Italic':'Regular'};
-
-            else if(run.italic)throw Error('SOURCE_TABLE_ITALIC_REQUIRES_FONT '+i);
-            if(/^[A-Za-z0-9]+$/.test(run.text)){
-                var actual=cell.texts[0].characters[run.start].appliedFont;
-                var expected=timesFont(run.italic?'Italic':'Regular');
-                if(String(actual.postscriptName)!==String(expected.postscriptName))
+                (run.italic&&/^[A-Za-z0-9\u0391-\u03a1\u03a3-\u03a9\u03b1-\u03c9 \u00a0.,;:+\-]+$/.test(run.text))){
+                var face=run.italic?'Italic':'Regular';
+                applyTimesFace(range,face);
+                var first=cell.texts[0].characters[run.start],actual=first.appliedFont;
+                if(!timesFaceMatches(first,face)||String(actual.postscriptName)!==String(timesFont(face).postscriptName))
                     throw Error('SOURCE_TABLE_FONT_ALIAS '+i+' '+actual.name+' '+actual.postscriptName);
-            }
+            }else if(run.italic)throw Error('SOURCE_TABLE_ITALIC_REQUIRES_FONT '+i);
 
         }
 
@@ -1034,6 +1034,18 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
 
     }
 
+    function timesFaceMatches(ch,face){
+        var actual=ch.appliedFont;
+        return actual&&actual.status===FontStatus.INSTALLED&&String(actual.fontFamily)==='Times New Roman'&&
+            family(ch)==='Times New Roman'&&String(ch.fontStyle)===face;
+    }
+
+    function applyTimesFace(ch,face){
+        timesFont(face);
+        // Pass the family and face separately, without embedding a face in the font argument.
+        ch.properties={appliedFont:'Times New Roman',fontStyle:face};
+    }
+
     function sourceTextFormatting(d,c,apply){
 
         var errors=[],blocks=c&&c.sourceTextFormatting,stories=scope(d);if(!blocks)return errors;
@@ -1092,19 +1104,20 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
                 }
                 var ch=hit.paragraph.characters[hit.projection.offsets[ci]],actualItalic=/Italic|Oblique/.test(String(ch.fontStyle));
 
-                var previousFont=String(ch.appliedFont.name),previousFace=String(ch.fontStyle);
+                var previousFont=String(ch.appliedFont.name),previousFace=String(ch.fontStyle),previousFamily=family(ch);
+                var legacyTimes=previousFamily==='Times New Roman (OTF)';
+                var formattedOperator=actualItalic&&String(ch.contents)==='='&&!legacyTimes;
+                var timesFace=null;
+                if(!exceptionFont){
+                    if(italic&&!formattedOperator)timesFace='Italic';
+                    if(!italic&&(legacyTimes||actualItalic&&previousFamily==='Times New Roman'))timesFace='Regular';
+                }
                 try{if(apply){
 
                     ch.position=position;
 
-                    if(italic){
-                        var formattedOperator=actualItalic&&String(ch.contents)==='=';
-                        if(!formattedOperator&&(family(ch)!=='Times New Roman'||String(ch.fontStyle)!=='Italic')){
-                            ch.properties={appliedFont:timesFont('Italic'),fontStyle:'Italic'};
-                        }
-                    }
-
-                    else if(actualItalic){if(family(ch)==='Times New Roman'){ch.appliedFont=timesFont('Regular');ch.fontStyle='Regular';}else{ch.appliedFont=hit.paragraph.appliedParagraphStyle.appliedFont;ch.fontStyle=hit.paragraph.appliedParagraphStyle.fontStyle;}}
+                    if(timesFace){if(!timesFaceMatches(ch,timesFace))applyTimesFace(ch,timesFace);}
+                    else if(!italic&&actualItalic){ch.appliedFont=hit.paragraph.appliedParagraphStyle.appliedFont;ch.fontStyle=hit.paragraph.appliedParagraphStyle.fontStyle;}
 
                 }
 
@@ -1114,6 +1127,7 @@ var actualFontFamily='';try{actualFontFamily=String(chars[i].appliedFont.fontFam
                 }
 
                 }catch(nativeFormatError){throw Error('SOURCE_FORMAT_NATIVE '+bi+':'+src.offsets[ci]+' text='+String(ch.contents)+' font='+previousFont+' face='+previousFace+' italic='+italic+' '+nativeFormatError);}
+                if(timesFace&&!timesFaceMatches(ch,timesFace))errors.push('SOURCE_TEXT_TIMES_FONT '+bi+':'+src.offsets[ci]+' '+timesFace);
                 if(ch.position!==position)errors.push('SOURCE_TEXT_POSITION '+bi+':'+src.offsets[ci]);
 
                 if(italic!==/Italic|Oblique/.test(String(ch.fontStyle)))errors.push('SOURCE_TEXT_ITALIC '+bi+':'+src.offsets[ci]+' '+String(ch.contents));
