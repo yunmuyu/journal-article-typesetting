@@ -5,6 +5,44 @@ var JournalScopedAssembly = (function () {
     function parse(path) { return eval('('+read(path)+')'); }
     function plain(text) { return String(text).replace(/[\s\uFFFC\u0016]/g,''); }
     function style(d,name) { var found=[];for(var i=0;i<d.allParagraphStyles.length;i++)if(d.allParagraphStyles[i].name===name)found.push(d.allParagraphStyles[i]);if(found.length!==1)fail('SCOPED_STYLE',name);return found[0]; }
+    function restoreSourceHeadings(d,body,blocks) {
+        var matches=[],ids={},groups=[],headingNames=[null,'一级标题','二级标题'],i,j;
+        for(i=0;i<blocks.length;i++){
+            var source=blocks[i],level=source.role==='heading1'?1:source.role==='heading2'?2:0;
+            if(!level)continue;
+            var found=[];
+            for(j=0;j<body.paragraphs.length;j++)if(plain(body.paragraphs[j].contents)===plain(source.text))found.push(j);
+            if(found.length!==1)fail('SCOPED_HEADING_MATCH',source.text);
+            var applied=body.paragraphs[found[0]].appliedParagraphStyle;
+            // Keep the value expression: the native fixture catches ExtendScript
+            // reusing a loop-local level/name value in previously pushed records.
+            matches.push({index:found[0],level:source.role==='heading1'?1:2,text:source.text});
+            if(applied.name===headingNames[level]){ids[level]=applied.id;groups.push(applied.parent);}
+        }
+        // Resolve template siblings within an already matched heading's group,
+        // not a same-named style from another article or template group.
+        for(i=0;i<matches.length;i++)if(ids[matches[i].level]===undefined){
+            for(j=0;j<groups.length;j++){
+                var sibling=groups[j].paragraphStyles.itemByName(headingNames[matches[i].level]);
+                if(sibling.isValid){ids[matches[i].level]=sibling.id;break;}
+            }
+            if(ids[matches[i].level]===undefined)fail('SCOPED_HEADING_STYLE_MISSING',headingNames[matches[i].level]);
+        }
+        var changed=0;
+        for(i=0;i<matches.length;i++){
+            var match=matches[i],paragraph=body.paragraphs[match.index];
+            match.expectedId=paragraph.appliedParagraphStyle.name===headingNames[match.level]?paragraph.appliedParagraphStyle.id:ids[match.level];
+            if(paragraph.appliedParagraphStyle.name===headingNames[match.level])continue;
+            paragraph.applyParagraphStyle(d.paragraphStyles.itemByID(ids[match.level]),true);
+            changed++;
+        }
+        // Check after all writes, so a later style application cannot mask a regression.
+        for(i=0;i<matches.length;i++){
+            var result=body.paragraphs[matches[i].index].appliedParagraphStyle;
+            if(result.name!==headingNames[matches[i].level]||result.id!==matches[i].expectedId)fail('SCOPED_HEADING_STYLE_WRITE',matches[i].text);
+        }
+        return changed;
+    }
     function plan(job) {
         if(!job.data||!job.data.blocks||!job.data.blocks.length)fail('SCOPED_BLOCKS_REQUIRED');
         var tables=0,figures=0,figureNumbers={},formulas={},n;
@@ -156,6 +194,7 @@ var JournalScopedAssembly = (function () {
             }
         }
         d.recompose();
+        restoreSourceHeadings(d,body,job.data.blocks);
         var v=view(d,context),config=job.auditConfig||{};
         config.sourceTextFormatting=job.data.blocks;config.formulaNumbers=job.formulas.entries||[];
         config.tableKinds=job.tables;config.tableHeaderRows=[];for(i=0;i<job.tables.length;i++)config.tableHeaderRows.push(job.tables[i].headerRows);
@@ -209,5 +248,5 @@ var JournalScopedAssembly = (function () {
         JournalLayout.repairOrphans(v);
         return {status:'scoped-assembled-unchecked',counts:counts,usesNativeColumns:!separate,figurePlacement:placement.decisions,tableMeasurements:tableMeasurements,formulaNumberAdjustments:formulaNumberAdjustments,bodyOverflow:body.overflows,bodyStoryId:body.id,firstFrames:[first[0].id,first[1].id]};
     }
-    return {plan:plan,view:view,run:run,growBodyPages:growBodyPages,deferTable:deferTable};
+    return {plan:plan,view:view,run:run,growBodyPages:growBodyPages,deferTable:deferTable,restoreSourceHeadings:restoreSourceHeadings};
 }());

@@ -1,0 +1,27 @@
+const fs=require('node:fs'),path=require('node:path'),vm=require('node:vm'),assert=require('node:assert/strict');
+const context=vm.createContext({});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../2-导入_InDesign/journal_scoped_assembly.jsxinc'),'utf8'),context);
+const h1={id:101,name:'一级标题',pointSize:12,isValid:true};
+const h2={id:102,name:'二级标题',pointSize:10.5,isValid:true};
+const duplicate={id:901,name:'一级标题',pointSize:9,isValid:true};
+const group={paragraphStyles:{itemByName(name){return name===h1.name?h1:name===h2.name?h2:{isValid:false};}}};
+h1.parent=group;h2.parent=group;
+const lookup=[];
+const doc={paragraphStyles:{itemByID(id){lookup.push(id);return [h1,h2,duplicate].find(s=>s.id===id);}}};
+function para(contents,style){return {contents,appliedParagraphStyle:style,applyParagraphStyle(s){this.appliedParagraphStyle=s;}};}
+const body={paragraphs:[para('0 引言\r',h2),para('1.1 小节\r',h2),para('正文\r',{id:103,name:'正文'})]};
+const source=[{role:'heading1',text:'0 引言'},{role:'heading2',text:'1.1 小节'},{role:'body',text:'正文'}];
+const restore=context.JournalScopedAssembly.restoreSourceHeadings;
+assert.equal(restore(doc,body,source),1);
+assert.equal(body.paragraphs[0].appliedParagraphStyle,h1);
+assert.equal(body.paragraphs[0].appliedParagraphStyle.pointSize,12);
+assert.deepEqual(lookup,[101],'resolve an explicit ID from the matching template group');
+assert.equal(body.paragraphs[2].appliedParagraphStyle.name,'正文');
+assert.equal(restore(doc,body,source),0,'correct headings remain unchanged');
+body.paragraphs[0].appliedParagraphStyle=h2;
+body.paragraphs[0].applyParagraphStyle=function(){this.appliedParagraphStyle=duplicate;};
+assert.throws(()=>restore(doc,body,source),/SCOPED_HEADING_STYLE_WRITE/,'same name but wrong style ID is rejected');
+assert.throws(()=>restore(doc,{paragraphs:[para('0 引言',h2)]},source),/SCOPED_HEADING_MATCH/);
+const noStyles={paragraphs:[para('0 引言',{id:103,name:'正文'})]};
+assert.throws(()=>restore(doc,noStyles,[source[0]]),/SCOPED_HEADING_STYLE_MISSING/,'do not silently skip unresolved headings');
+console.log('PASS source heading levels, stable template style IDs, idempotence and failed writes');
