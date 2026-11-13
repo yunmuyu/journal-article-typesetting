@@ -563,7 +563,14 @@ var JournalLayout = (function () {
 
     function fitFormulaNumbers(d,allowTabShift){var items=d.allPageItems,logs=[];for(var i=0;i<items.length;i++)if(/^source-formula-/.test(items[i].label)&&items[i].extractLabel('formula-display')==='true'){
 
- var r=items[i],p=r.parent.paragraphs[0],frame=p.insertionPoints[0].parentTextFrames[0],target=frame.geometricBounds[1]+p.tabStops[0].position,text=String(p.contents),object=text.indexOf(String.fromCharCode(65532)),match=text.match(/[（(][0-9]+[）)]/);if(!match)throw Error('Formula number absent');
+ var r=items[i],p=r.parent.paragraphs[0],frame=p.insertionPoints[0].parentTextFrames[0];
+ if(!p.tabStops.length){
+     var columnCount=Number(frame.textFramePreferences.textColumnCount)||1;
+     var columnWidth=(frame.geometricBounds[3]-frame.geometricBounds[1]-(columnCount-1)*Number(frame.textFramePreferences.textColumnGutter||0))/columnCount;
+     p.tabStops.add({position:columnWidth/2,alignment:TabStopAlignment.CENTER_ALIGN});
+     p.tabStops.add({position:columnWidth,alignment:TabStopAlignment.RIGHT_ALIGN});
+ }
+ var target=frame.geometricBounds[1]+p.tabStops[0].position,text=String(p.contents),object=text.indexOf(String.fromCharCode(65532)),match=text.match(/[（(][0-9]+[）)]/);if(!match)throw Error('Formula number absent');
 
  var numberStart=text.indexOf(match[0]), hasNumberTab=text.substring(object+1,numberStart).indexOf(String.fromCharCode(9))>=0;
  if(allowTabShift&&hasNumberTab&&p.tabStops.length===2&&p.lines.length>1){
